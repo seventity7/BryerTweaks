@@ -1,0 +1,8 @@
+bin/
+obj/
+Publish/
+Publish
+.vs/
+.idea/
+SimpleTweaksPlugin.json
+*.sln.DotSettings.user

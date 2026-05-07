@@ -1,0 +1,40 @@
+name: Build BryerTweaks for PullRequest
+on:
+  pull_request:
+jobs:
+  build:
+    runs-on: [windows-2022]
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: 'true'
+          fetch-depth: 0
+      
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.1
+        with:
+          vs-prerelease: true
+        
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v1.0.5
+        
+      - name: Restore NuGet Packages
+        run: nuget restore dev/BryerTweaks.Dev.sln
+
+      - name: Download Dalamud
+        run: |
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/v9/latest.zip -OutFile latest.zip
+          Expand-Archive -Force latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev"
+      - name: Build
+        run: msbuild dev/BryerTweaks.Dev.sln /p:Configuration=Debug
+
+      - name: Extract Publish
+        run: |
+          Expand-Archive -Force ./bin/x64/Debug/BryerTweaks/latest.zip ./Artifact
+          
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v2.2.1
+        with:
+          name: pr-artifact
+          path: ./Artifact/*
