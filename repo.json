@@ -12,9 +12,9 @@
     "DalamudApiLevel": 15,
     "IsHide": false,
     "IsTestingExclusive": false,
-    "DownloadLinkInstall": "https://github.com/seventity7/CreateXIV/releases/latest/download/BryerTweaks.zip",
+    "DownloadLinkInstall": "https://github.com/seventity7/BryerTweaks/releases/latest/download/BryerTweaks.zip",
     "DownloadLinkTesting": null,
-    "DownloadLinkUpdate": "https://github.com/seventity7/CreateXIV/releases/latest/download/BryerTweaks.zip",
+    "DownloadLinkUpdate": "https://github.com/seventity7/BryerTweaks/releases/latest/download/BryerTweaks.zip",
     "LastUpdate": "1760000000"
   }
 ]
