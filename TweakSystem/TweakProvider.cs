@@ -56,13 +56,9 @@ public class TweakProvider : IDisposable {
                     #if !TEST
                     if (tweak is not IDisabledTweak) {
                         tweak.SetupInternal();
-                        if (tweak.Ready && (BryerTweaks.Plugin.PluginConfig.EnabledTweaks.Contains(tweak.Key) || tweak is SubTweakManager {AlwaysEnabled: true})) {
-                            SimpleLog.Debug($"Enable: {t.Name}");
-                            try {
-                                tweak.InternalEnable();
-                            } catch (Exception ex) {
-                                BryerTweaks.Plugin.Error(tweak, ex, true, $"Error in Enable for '{tweak.Name}");
-                            }
+                        if (tweak.Ready && (BryerTweaks.Plugin.PluginConfig.EnabledTweaks.Contains(tweak.Key) || tweak is SubTweakManager { AlwaysEnabled: true })) {
+                            SimpleLog.Debug($"Queue startup enable: {t.Name}");
+                            BryerTweaks.Plugin.QueueStartupTweakEnable(tweak);
                         }
                     }
                     #endif

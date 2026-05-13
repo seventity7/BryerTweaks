@@ -22,6 +22,12 @@ public sealed class FateMaidenOverlayRenderer {
     private const int CompassRadius = 750;
     private const int IconScaleFactor = 100;
     private const int IconOpacity = 100;
+
+    private static readonly Vector4 IconShadowColor = new(0.655f, 0.439f, 0.871f, 0.78f); // #A770DE
+    private const float IconShadowBaseScale = 1.34f;
+    private const float IconShadowPulseScale = 0.18f;
+    private const float IconShadowPulseSpeed = 2.85f;
+
     private const int SafeZoneOffsetWidth = 0;
     private const int SafeZoneOffsetHeight = 0;
     private const int CenterPointXOffset = 0;
@@ -68,7 +74,9 @@ public sealed class FateMaidenOverlayRenderer {
         ResetStabilizedState();
     }
 
-    public void Draw(bool overlayEnabled, float hideDistance) {
+    public void Draw(bool overlayEnabled, float hideDistance, float overlayScale = 1.0f) {
+        overlayScale = SanitizeOverlayScale(overlayScale);
+
         if (!tracking || gameGui.GameUiHidden) {
             return;
         }
@@ -98,13 +106,13 @@ public sealed class FateMaidenOverlayRenderer {
 
         if (gameGui.WorldToScreen(drawPosition, out var screenPosition, out var inView) && inView && IsFinite(screenPosition)) {
             var stabilized = StabilizePosition(ref stableScreenPosition, SnapToPixel(screenPosition), 2.0f, 24f);
-            DrawWorldMarker(ImGui.GetBackgroundDrawList(), stabilized, distance);
+            DrawWorldMarker(ImGui.GetBackgroundDrawList(), stabilized, distance, overlayScale);
             stableCompassPosition = null;
             return;
         }
 
         stableScreenPosition = null;
-        DrawCompassMarker(player.Position, drawPosition, distance);
+        DrawCompassMarker(player.Position, drawPosition, distance, overlayScale);
     }
 
     private IGameObject? ResolveTrackedMaiden(IGameObject player) {
@@ -188,14 +196,15 @@ public sealed class FateMaidenOverlayRenderer {
         return false;
     }
 
-    private void DrawWorldMarker(ImDrawListPtr drawList, Vector2 screenPosition, float distance) {
-        var iconSize = 38f * (IconScaleFactor / 100f) * ImGuiHelpers.GlobalScale;
-        var iconCenter = SnapToPixel(screenPosition - new Vector2(0f, 8f * ImGuiHelpers.GlobalScale));
+    private void DrawWorldMarker(ImDrawListPtr drawList, Vector2 screenPosition, float distance, float overlayScale) {
+        var iconSize = 38f * (IconScaleFactor / 100f) * overlayScale * ImGuiHelpers.GlobalScale;
+        var iconCenter = SnapToPixel(screenPosition - new Vector2(0f, 8f * overlayScale * ImGuiHelpers.GlobalScale));
         var opacity = IconOpacity / 100f;
 
+        DrawIconShadow(drawList, MaidenIconId, iconCenter, new Vector2(iconSize), opacity);
         DrawIcon(drawList, MaidenIconId, iconCenter, new Vector2(iconSize), opacity);
 
-        var labelPosition = iconCenter + new Vector2(0f, iconSize * 0.62f + 12f * ImGuiHelpers.GlobalScale);
+        var labelPosition = iconCenter + new Vector2(0f, iconSize * 0.62f + 12f * overlayScale * ImGuiHelpers.GlobalScale);
 
         DrawSoftLabel(
             drawList,
@@ -204,24 +213,24 @@ public sealed class FateMaidenOverlayRenderer {
             new Vector4(1f, 1f, 1f, 1f),
             new Vector4(0f, 0f, 0f, 1f),
             opacity,
-            1.12f);
+            1.12f * overlayScale);
 
         DrawSoftLabel(
             drawList,
             GetDistanceLabel(distance),
-            labelPosition + new Vector2(0f, 18f * ImGuiHelpers.GlobalScale),
+            labelPosition + new Vector2(0f, 18f * overlayScale * ImGuiHelpers.GlobalScale),
             new Vector4(1f, 1f, 1f, 1f),
             new Vector4(0f, 0f, 0f, 1f),
             opacity,
-            1.12f);
+            1.12f * overlayScale);
     }
 
-    private void DrawCompassMarker(Vector3 playerPosition, Vector3 markerPosition, float distance) {
+    private void DrawCompassMarker(Vector3 playerPosition, Vector3 markerPosition, float distance, float overlayScale) {
         var drawList = ImGui.GetBackgroundDrawList();
         var viewport = ImGui.GetMainViewport();
         var vpMin = viewport.Pos;
         var vpMax = viewport.Pos + viewport.Size;
-        var iconSize = 35f * (IconScaleFactor / 100f) * ImGuiHelpers.GlobalScale;
+        var iconSize = 35f * (IconScaleFactor / 100f) * overlayScale * ImGuiHelpers.GlobalScale;
         var clampSize = iconSize * 2.5f;
         var opacity = IconOpacity / 100f;
 
@@ -238,14 +247,17 @@ public sealed class FateMaidenOverlayRenderer {
         iconPos.Y = Math.Clamp(iconPos.Y, vpMin.Y + clampSize + SafeZoneOffsetHeight, vpMax.Y - clampSize - SafeZoneOffsetHeight);
         iconPos = StabilizePosition(ref stableCompassPosition, SnapToPixel(iconPos), 1.5f, 30f);
 
+        DrawIconShadow(drawList, MaidenIconId, iconPos, new Vector2(iconSize), opacity);
         DrawIcon(drawList, MaidenIconId, iconPos, new Vector2(iconSize), opacity);
 
         var angle = MathF.Atan2(direction.Y, direction.X);
-        var arrowSize = 23f * (IconScaleFactor / 100f) * ImGuiHelpers.GlobalScale;
+        var arrowSize = 23f * (IconScaleFactor / 100f) * overlayScale * ImGuiHelpers.GlobalScale;
         var arrowCenter = iconPos + direction * (iconSize * 0.75f + arrowSize * 0.55f);
-        DrawRotatedIcon(drawList, DirectionArrowIconId, SnapToPixel(arrowCenter), new Vector2(arrowSize * 2f), angle, opacity);
+        var snappedArrowCenter = SnapToPixel(arrowCenter);
+        DrawRotatedIconShadow(drawList, DirectionArrowIconId, snappedArrowCenter, new Vector2(arrowSize * 2f), angle, opacity * 0.82f);
+        DrawRotatedIcon(drawList, DirectionArrowIconId, snappedArrowCenter, new Vector2(arrowSize * 2f), angle, opacity);
 
-        var labelPosition = iconPos + new Vector2(0f, iconSize * 0.75f + 14f * ImGuiHelpers.GlobalScale);
+        var labelPosition = iconPos + new Vector2(0f, iconSize * 0.75f + 14f * overlayScale * ImGuiHelpers.GlobalScale);
 
         DrawSoftLabel(
             drawList,
@@ -254,16 +266,16 @@ public sealed class FateMaidenOverlayRenderer {
             new Vector4(1f, 1f, 1f, 1f),
             new Vector4(0f, 0f, 0f, 1f),
             opacity,
-            1.12f);
+            1.12f * overlayScale);
 
         DrawSoftLabel(
             drawList,
             GetDistanceLabel(distance),
-            labelPosition + new Vector2(0f, 18f * ImGuiHelpers.GlobalScale),
+            labelPosition + new Vector2(0f, 18f * overlayScale * ImGuiHelpers.GlobalScale),
             new Vector4(1f, 1f, 1f, 1f),
             new Vector4(0f, 0f, 0f, 1f),
             opacity,
-            1.12f);
+            1.12f * overlayScale);
     }
 
     private Vector2 GetDirectionToTarget(Vector3 playerPosition, Vector3 markerPosition, Vector2 playerScreen) {
@@ -285,6 +297,79 @@ public sealed class FateMaidenOverlayRenderer {
 
         return direction.LengthSquared() < 0.001f ? new Vector2(0f, -1f) : Vector2.Normalize(direction);
     }
+
+    private void DrawIconShadow(ImDrawListPtr drawList, uint iconId, Vector2 center, Vector2 size, float opacity) {
+        var wrap = GetIcon(iconId);
+        if (wrap == null) {
+            DrawFallbackShadow(drawList, center, size, opacity);
+            return;
+        }
+
+        var pulse = GetIconShadowPulse();
+        var shadowScale = IconShadowBaseScale + IconShadowPulseScale * pulse;
+        var shadowSize = size * shadowScale;
+        var shadowAlpha = IconShadowColor.W * opacity * (0.58f + 0.34f * pulse);
+        var shadowColor = ImGui.GetColorU32(new Vector4(IconShadowColor.X, IconShadowColor.Y, IconShadowColor.Z, shadowAlpha));
+
+        var min = center - shadowSize / 2f;
+        var max = center + shadowSize / 2f;
+
+        drawList.AddImage(wrap.Handle, min, max, Vector2.Zero, Vector2.One, shadowColor);
+    }
+
+    private void DrawRotatedIconShadow(ImDrawListPtr drawList, uint iconId, Vector2 center, Vector2 size, float rotation, float opacity) {
+        var wrap = GetIcon(iconId);
+        if (wrap == null) {
+            DrawFallbackShadow(drawList, center, size, opacity);
+            return;
+        }
+
+        var pulse = GetIconShadowPulse();
+        var shadowScale = IconShadowBaseScale + IconShadowPulseScale * pulse;
+        var shadowSize = size * shadowScale;
+        var shadowAlpha = IconShadowColor.W * opacity * (0.52f + 0.32f * pulse);
+        var shadowColor = ImGui.GetColorU32(new Vector4(IconShadowColor.X, IconShadowColor.Y, IconShadowColor.Z, shadowAlpha));
+
+        var half = shadowSize / 2f;
+        var corners = new[] {
+            new Vector2(-half.X, -half.Y),
+            new Vector2(half.X, -half.Y),
+            new Vector2(half.X, half.Y),
+            new Vector2(-half.X, half.Y),
+        };
+
+        var cos = MathF.Cos(rotation);
+        var sin = MathF.Sin(rotation);
+
+        for (var i = 0; i < corners.Length; i++) {
+            var c = corners[i];
+            corners[i] = center + new Vector2(c.X * cos - c.Y * sin, c.X * sin + c.Y * cos);
+        }
+
+        drawList.AddImageQuad(
+            wrap.Handle,
+            corners[0],
+            corners[1],
+            corners[2],
+            corners[3],
+            Vector2.UnitY,
+            Vector2.Zero,
+            Vector2.UnitX,
+            Vector2.One,
+            shadowColor);
+    }
+
+    private static void DrawFallbackShadow(ImDrawListPtr drawList, Vector2 center, Vector2 size, float opacity) {
+        var pulse = GetIconShadowPulse();
+        var radius = size.X * (0.56f + 0.08f * pulse);
+        var alpha = IconShadowColor.W * opacity * (0.46f + 0.24f * pulse);
+        var color = ImGui.GetColorU32(new Vector4(IconShadowColor.X, IconShadowColor.Y, IconShadowColor.Z, alpha));
+
+        drawList.AddCircleFilled(center, radius, color, 40);
+    }
+
+    private static float GetIconShadowPulse()
+        => (MathF.Sin((float)DateTime.UtcNow.TimeOfDay.TotalSeconds * IconShadowPulseSpeed * MathF.Tau) + 1f) * 0.5f;
 
     private void DrawIcon(ImDrawListPtr drawList, uint iconId, Vector2 center, Vector2 size, float opacity) {
         var min = center - size / 2f;
@@ -408,6 +493,9 @@ public sealed class FateMaidenOverlayRenderer {
         cachedDistanceYalms = -1;
         lastDistanceLabelUpdateUtc = DateTime.MinValue;
     }
+
+    private static float SanitizeOverlayScale(float overlayScale)
+        => Math.Clamp(overlayScale, 0.50f, 2.00f);
 
     private static Vector2 StabilizePosition(ref Vector2? previous, Vector2 target, float deadzonePixels, float snapDistancePixels) {
         target = SnapToPixel(target);

@@ -817,9 +817,9 @@ public abstract class BaseTweak {
                 var methodParams = method.GetParameters();
 
                 handler = methodParams.Length switch {
-                    0 => Service.Chat.AddChatLinkHandler((uint)attr.Id, (i, s) => { method.Invoke(this, []); }),
-                    1 when methodParams[0].ParameterType == typeof(SeString) => Service.Chat.AddChatLinkHandler((uint)attr.Id, (i, s) => { method.Invoke(this, [s]); }),
-                    2 when methodParams[0].ParameterType == typeof(uint) && methodParams[1].ParameterType == typeof(SeString) => Service.Chat.AddChatLinkHandler((uint)attr.Id, (i, s) => { method.Invoke(this, [i, s]); }),
+                    0 => Service.Chat.AddChatLinkHandler((uint)attr.Id, (i, s) => { InvokeLinkHandlerSafely(method, []); }),
+                    1 when methodParams[0].ParameterType == typeof(SeString) => Service.Chat.AddChatLinkHandler((uint)attr.Id, (i, s) => { InvokeLinkHandlerSafely(method, [s]); }),
+                    2 when methodParams[0].ParameterType == typeof(uint) && methodParams[1].ParameterType == typeof(SeString) => Service.Chat.AddChatLinkHandler((uint)attr.Id, (i, s) => { InvokeLinkHandlerSafely(method, [i, s]); }),
                     _ => handler
                 };
             }
@@ -834,6 +834,14 @@ public abstract class BaseTweak {
         AfterEnable();
 
         Enabled = true;
+    }
+
+    private void InvokeLinkHandlerSafely(MethodInfo method, object?[] args) {
+        try {
+            method.Invoke(this, args);
+        } catch (Exception ex) {
+            Plugin.Error(this, ex, true, $"Error in link handler '{method.Name}'");
+        }
     }
 
     protected virtual void Enable() { }

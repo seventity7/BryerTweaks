@@ -219,13 +219,10 @@ public unsafe class TargetHP : UiAdjustments.SubTweak {
     }
 
     private void UpdateNameplateHpBar(INamePlateUpdateHandler handler) {
-        if (handler.PlayerCharacter != null) return;
-
-        var gameObject = handler.GameObject;
-        if (gameObject == null || gameObject.ObjectKind != ObjectKind.BattleNpc) return;
-        if (gameObject is not ICharacter character) return;
-        if (character.MaxHp == 0) return;
-        if (!IsEnemyNameplate(handler)) return;
+        if (!TryGetCustomHpBarTarget(handler, out var character)) {
+            RestoreNameplateHpBar(handler);
+            return;
+        }
 
         var hpPercent = Math.Clamp(character.CurrentHp / (float)character.MaxHp, 0f, 1f);
         var color = Config.HpBarStyle switch {
@@ -236,6 +233,24 @@ public unsafe class TargetHP : UiAdjustments.SubTweak {
         };
 
         ApplyNameplateHpBarColor(handler, color);
+    }
+
+    private static bool TryGetCustomHpBarTarget(INamePlateUpdateHandler handler, out ICharacter character) {
+        character = null!;
+
+        // Nameplate slots are reused by the game. If a slot was previously an enemy
+        // and later becomes the player/another non-enemy plate, its gauge nodes may
+        // still have the custom color unless we explicitly restore them.
+        if (handler.PlayerCharacter != null) return false;
+
+        var gameObject = handler.GameObject;
+        if (gameObject == null || gameObject.ObjectKind != ObjectKind.BattleNpc) return false;
+        if (gameObject is not ICharacter battleCharacter) return false;
+        if (battleCharacter.MaxHp == 0) return false;
+        if (!IsEnemyNameplate(handler)) return false;
+
+        character = battleCharacter;
+        return true;
     }
 
     private unsafe void ApplyNameplateHpBarColor(INamePlateUpdateHandler handler, Vector3 color) {

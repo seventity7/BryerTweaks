@@ -93,6 +93,8 @@ public class TimestampColors : Tweak {
 
     private void OnCheckMessageHandled(IHandleableChatMessage message) {
         try {
+            if (!Service.ClientState.IsLoggedIn) return;
+
             SanitizeConfig();
 
             RemoveExistingPluginTimestamp(message);
@@ -103,7 +105,6 @@ public class TimestampColors : Tweak {
     }
 
     private void RemoveExistingPluginTimestamp(IHandleableChatMessage message) {
-        RemoveLeadingTimestamp(message.Sender.Payloads);
         RemoveLeadingTimestamp(message.Message.Payloads);
     }
 
@@ -147,11 +148,6 @@ public class TimestampColors : Tweak {
     private void AddTimestamp(IHandleableChatMessage message) {
         var timestamp = BuildTimestamp(DateTime.Now);
         if (string.IsNullOrWhiteSpace(timestamp)) return;
-
-        if (!string.IsNullOrWhiteSpace(message.Sender.TextValue)) {
-            message.Sender.Payloads.InsertRange(0, BuildTimestampPayloads(timestamp, insertIntoSender: true));
-            return;
-        }
 
         message.Message.Payloads.InsertRange(0, BuildTimestampPayloads(timestamp, insertIntoSender: false));
     }

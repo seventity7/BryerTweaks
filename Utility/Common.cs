@@ -37,16 +37,27 @@ public unsafe class Common {
     public static event Action FrameworkUpdate;
 
     public static void InvokeFrameworkUpdate() {
-        if (!PerformanceMonitor.DoFrameworkMonitor) {
-            FrameworkUpdate?.Invoke();
-            return;
-        }
+        var handlers = FrameworkUpdate?.GetInvocationList();
+        if (handlers == null || handlers.Length == 0) return;
 
-        if (FrameworkUpdate == null) return;
-        foreach (var updateDelegate in FrameworkUpdate.GetInvocationList()) {
-            PerformanceMonitor.Begin($"[FrameworkUpdate]{updateDelegate.Target?.GetType().Name}.{updateDelegate.Method.Name}");
-            updateDelegate.DynamicInvoke();
-            PerformanceMonitor.End($"[FrameworkUpdate]{updateDelegate.Target?.GetType().Name}.{updateDelegate.Method.Name}");
+        foreach (var handler in handlers) {
+            if (handler is not Action updateDelegate) continue;
+
+            var perfName = $"[FrameworkUpdate]{updateDelegate.Target?.GetType().Name}.{updateDelegate.Method.Name}";
+            try {
+                if (PerformanceMonitor.DoFrameworkMonitor) {
+                    PerformanceMonitor.Begin(perfName);
+                }
+
+                updateDelegate.Invoke();
+            } catch (Exception ex) {
+                FrameworkUpdate -= updateDelegate;
+                SimpleLog.Error(ex, $"Framework update callback failed and was removed: {perfName}");
+            } finally {
+                if (PerformanceMonitor.DoFrameworkMonitor) {
+                    PerformanceMonitor.End(perfName);
+                }
+            }
         }
     }
 

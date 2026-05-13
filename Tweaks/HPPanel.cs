@@ -330,6 +330,7 @@ public unsafe class HPPanel : UiAdjustments.SubTweak {
 
     private void OnChatMessage(IHandleableChatMessage chatMessage) {
         try {
+            if (!Service.ClientState.IsLoggedIn) return;
             if (!IsLikelyBattleLog(chatMessage.LogKind)) return;
 
             var msg = chatMessage.Message.TextValue;

@@ -26,10 +26,15 @@ public class ReplyChannelSwitch : ChatTweaks.SubTweak {
     }
 
     private void CheckMesssage(IHandleableChatMessage chatMessage) {
-        if (chatMessage.LogKind != XivChatType.ErrorMessage) return;
-        if (chatMessage.Message.TextValue != searchString) return;
-        ChatHelper.SendMessage("/t <r>");
-        chatMessage.PreventOriginal();
+        try {
+            if (!Service.ClientState.IsLoggedIn) return;
+            if (chatMessage.LogKind != XivChatType.ErrorMessage) return;
+            if (chatMessage.Message.TextValue != searchString) return;
+            ChatHelper.SendMessage("/t <r>");
+            chatMessage.PreventOriginal();
+        } catch (Exception ex) {
+            SimpleLog.Error(ex, "Reply Channel Switch failed to process a chat message.");
+        }
     }
 
     protected override void Disable() => Service.Chat.CheckMessageHandled -= CheckMesssage;

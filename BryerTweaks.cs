@@ -44,7 +44,10 @@ namespace BryerTweaks {
         public readonly DebugWindow DebugWindow = new DebugWindow();
         public readonly WindowSystem WindowSystem = new WindowSystem("BryerTweaks");
         public readonly Changelog ChangelogWindow = new();
-        
+
+        private readonly List<BaseTweak> pendingStartupTweaks = new();
+        private int startupEnableDelayTicks = -1;
+        private bool processingStartupTweaks;
         
         internal CultureInfo Culture {
             get {
@@ -289,7 +292,68 @@ namespace BryerTweaks {
         }
         
 
-        private void FrameworkOnUpdate(IFramework framework) => Common.InvokeFrameworkUpdate();
+        private void FrameworkOnUpdate(IFramework framework) {
+            try {
+                ProcessStartupTweakEnableQueue();
+                Common.InvokeFrameworkUpdate();
+            } catch (Exception ex) {
+                SimpleLog.Error(ex, "Unhandled BryerTweaks framework update error.");
+            }
+        }
+
+        internal void QueueStartupTweakEnable(BaseTweak tweak) {
+            if (tweak == null || tweak.IsDisposed) return;
+            if (pendingStartupTweaks.Contains(tweak)) return;
+
+            pendingStartupTweaks.Add(tweak);
+            startupEnableDelayTicks = -1;
+            SimpleLog.Debug($"Queued delayed startup enable for {tweak.Name}.");
+        }
+
+        private void ProcessStartupTweakEnableQueue() {
+            if (processingStartupTweaks) return;
+            if (pendingStartupTweaks.Count == 0) return;
+
+            if (!IsCharacterReadyForStartupTweaks()) {
+                startupEnableDelayTicks = -1;
+                return;
+            }
+
+            if (startupEnableDelayTicks < 0) {
+                startupEnableDelayTicks = 120;
+                return;
+            }
+
+            if (startupEnableDelayTicks-- > 0) return;
+
+            processingStartupTweaks = true;
+            try {
+                var queue = pendingStartupTweaks.ToArray();
+                pendingStartupTweaks.Clear();
+
+                foreach (var tweak in queue) {
+                    if (tweak == null || tweak.IsDisposed || tweak.Enabled) continue;
+                    if (!PluginConfig.EnabledTweaks.Contains(tweak.Key) && tweak is not SubTweakManager { AlwaysEnabled: true }) continue;
+
+                    try {
+                        SimpleLog.Debug($"Delayed startup enable: {tweak.Name}");
+                        tweak.InternalEnable();
+                    } catch (Exception ex) {
+                        Error(tweak, ex, true, $"Error while delayed enabling '{tweak.Name}'");
+                    }
+                }
+            } finally {
+                processingStartupTweaks = false;
+            }
+        }
+
+        private static bool IsCharacterReadyForStartupTweaks() {
+            try {
+                return Service.ClientState.IsLoggedIn && Service.Objects.LocalPlayer != null;
+            } catch {
+                return false;
+            }
+        }
 
         public void SetupLocalization() {
             this.PluginConfig.Language ??= Service.ClientState.ClientLanguage switch {

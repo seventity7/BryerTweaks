@@ -59,34 +59,35 @@ public unsafe partial class ExpGainLevelPercent : ChatTweaks.SubTweak {
     private readonly Regex expDropRegex = ExpGainedRegex();
 
     private void OnChatMessage(IHandleableChatMessage chatMessage) {
-        // Don't modify messages if its not in the experience gain chat channel.
-        if (chatMessage.LogKind != ExperienceGainedChatMessageType) return;
-        
-        var match = expDropRegex.Match(chatMessage.Message.TextValue);
-        if (!match.Success) return;
-        
-        var classJobName = match.Groups[2].ToString().Trim();
+        try {
+            if (!Service.ClientState.IsLoggedIn || Service.Objects.LocalPlayer == null) return;
+            if (chatMessage.LogKind != ExperienceGainedChatMessageType) return;
 
-        if (string.IsNullOrWhiteSpace(classJobName)) {
-            classJobName = Service.Objects.LocalPlayer?.ClassJob.Value.Name.ExtractText() ?? string.Empty;
-        }
+            var textValue = chatMessage.Message.TextValue;
+            if (string.IsNullOrEmpty(textValue)) return;
 
-        if (!ExpToNextMap.TryGetValue(classJobName.ToLowerInvariant(), out var getNextExpFunc)) {
-            return;
+            var match = expDropRegex.Match(textValue);
+            if (!match.Success) return;
+
+            var classJobName = match.Groups[2].ToString().Trim();
+
+            if (string.IsNullOrWhiteSpace(classJobName)) {
+                classJobName = Service.Objects.LocalPlayer?.ClassJob.Value.Name.ExtractText() ?? string.Empty;
+            }
+
+            if (string.IsNullOrWhiteSpace(classJobName)) return;
+            if (!ExpToNextMap.TryGetValue(classJobName.ToLowerInvariant(), out var getNextExpFunc)) return;
+
+            var gainedExpStr = match.Groups[1].ToString().Replace(",", string.Empty);
+            if (!int.TryParse(gainedExpStr, out var gainedExp)) return;
+
+            var expToNext = getNextExpFunc();
+            if (expToNext <= 0) return;
+
+            var pctOfNextLevel = Math.Round((double)gainedExp / expToNext * 100.0f, 2);
+            chatMessage.Message = new SeString(chatMessage.Message.Payloads.Append(new TextPayload($" ({pctOfNextLevel}%)")).ToList());
+        } catch (Exception ex) {
+            SimpleLog.Error(ex, "ExpGainLevelPercent failed while handling a chat message.");
         }
-        
-        // Parse gained exp from message
-        var gainedExpStr = match.Groups[1].ToString().Replace(",", string.Empty);
-        var gainedExp = int.Parse(gainedExpStr);
-        
-        // Get next level exp threshold
-        var expToNext = getNextExpFunc();
-        
-        if (expToNext <= 0) return;
-        
-        // Calculate gained exp percentage of next level
-        var pctOfNextLevel = Math.Round((double)gainedExp / expToNext * 100.0f, 2);
-        
-        chatMessage.Message = new SeString(chatMessage.Message.Payloads.Append(new TextPayload($" ({pctOfNextLevel}%)")).ToList());
     }
 }

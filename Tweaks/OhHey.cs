@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.SubKinds;
@@ -28,6 +30,11 @@ public class OhHey : Tweak
     private const int MaxTargetHistory = 10;
     private const int MaxSoundEffectId = 16;
     private const string DtrBarTitle = "Oh Hey!";
+    private const string ExclamationVfxPath = "vfx/emote_sp/hirameki/eff/emote_sp020f.avfx";
+    private const string CreateActorVfxSignature = "40 53 55 56 57 48 81 EC ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F B6 AC 24 ?? ?? ?? ?? 0F 28 F3 49 8B F8";
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate nint CreateActorVfxDelegate([MarshalAs(UnmanagedType.LPStr)] string path, nint caster, nint target, float scale, char a5, ushort a6, char a7);
 
     public class Configs : TweakConfig
     {
@@ -36,6 +43,7 @@ public class OhHey : Tweak
         public bool EnableTargetNotifications = true;
         public bool EnableTargetSoundNotification = false;
         public uint TargetSoundNotificationId = 1;
+        public bool EnableTargetVfxNotification = false;
         public bool ShowSelfTarget = true;
         public bool NotifyOnSelfTarget = false;
         public bool EnableTargetNotificationInCombat = false;
@@ -49,6 +57,10 @@ public class OhHey : Tweak
     private readonly List<ulong> lastTargetingPlayers = [];
     private readonly List<TargetEvent> currentTargets = [];
     private readonly List<TargetEvent> targetHistory = [];
+
+    private CreateActorVfxDelegate? createActorVfx;
+    private bool vfxInitializationFailed;
+    private bool hasLoggedVfxUnavailable;
 
     private IDtrBarEntry? dtrBarEntry;
 
@@ -90,6 +102,7 @@ public class OhHey : Tweak
         ImGui.TextUnformatted("Notification Settings:");
         hasChanged |= ImGui.Checkbox("Enable target notifications", ref Config.EnableTargetNotifications);
         hasChanged |= ImGui.Checkbox("Enable sound notification on target", ref Config.EnableTargetSoundNotification);
+        hasChanged |= ImGui.Checkbox("Show Exclamation VFX over targeting players", ref Config.EnableTargetVfxNotification);
 
         ImGui.TextUnformatted("Sound to play (SE.1 - SE.16)");
         var selectedIndex = Math.Clamp((int)Config.TargetSoundNotificationId, 1, MaxSoundEffectId);
@@ -201,7 +214,7 @@ public class OhHey : Tweak
                 targetingPlayer.HomeWorld.RowId,
                 targetingPlayer.GameObjectId == currentPlayer.GameObjectId,
                 DateTime.Now);
-            OnTarget(targetEvent);
+            OnTarget(targetEvent, targetingPlayer);
         }
 
         var targetingPlayerIds = targetingPlayers.Select(player => player.GameObjectId).ToArray();
@@ -252,7 +265,7 @@ public class OhHey : Tweak
         return (Service.Targets.Target ?? Service.Targets.SoftTarget)?.GameObjectId == targetId;
     }
 
-    private void OnTarget(TargetEvent targetEvent)
+    private void OnTarget(TargetEvent targetEvent, IPlayerCharacter? targetingPlayer = null)
     {
         SimpleLog.Verbose($"Targeted by {targetEvent.Name} (ID: {targetEvent.GameObjectId} Self: {targetEvent.IsSelf})");
         if (currentTargets.Exists(target => target.GameObjectId == targetEvent.GameObjectId))
@@ -280,7 +293,7 @@ public class OhHey : Tweak
             return;
         }
 
-        SendNotification(targetEvent);
+        SendNotification(targetEvent, targetingPlayer);
     }
 
     private void UpdateTargetList(TargetEvent targetEvent)
@@ -333,7 +346,7 @@ public class OhHey : Tweak
         targetHistory.Add(historyEntry);
     }
 
-    private void SendNotification(TargetEvent targetEvent)
+    private void SendNotification(TargetEvent targetEvent, IPlayerCharacter? targetingPlayer)
     {
         var chatMessage = new SeStringBuilder()
             .AddUiForeground("[Oh Hey!] ", 537)
@@ -343,10 +356,218 @@ public class OhHey : Tweak
             .Build();
         Service.Chat.Print(chatMessage);
 
+        if (Config.EnableTargetVfxNotification)
+        {
+            SpawnTargetVfx(targetEvent, targetingPlayer);
+        }
+
         if (Config.EnableTargetSoundNotification)
         {
             PlayTargetSound();
         }
+    }
+
+    private void SpawnTargetVfx(TargetEvent targetEvent, IPlayerCharacter? targetingPlayer)
+    {
+        if (targetingPlayer == null)
+        {
+            return;
+        }
+
+        if (!TryInitializeVfx())
+        {
+            return;
+        }
+
+        var targetAddress = GetObjectAddress(targetingPlayer);
+        if (targetAddress == IntPtr.Zero)
+        {
+            LogVfxUnavailable("Unable to resolve the targeting player's native object address.");
+            return;
+        }
+
+        TrySpawnTargetVfx(ExclamationVfxPath, targetAddress);
+    }
+
+    private bool TrySpawnTargetVfx(string path, nint targetAddress)
+    {
+        if (createActorVfx == null)
+        {
+            return false;
+        }
+
+        if (!GameFileExists(path))
+        {
+            LogVfxUnavailable($"VFX file was not found in game data: {path}");
+            return false;
+        }
+
+        try
+        {
+            // Use the same one-shot Actor VFX create call pattern used by VFXEditor, but do not keep
+            // or remove a handle here. Exclamation effects are short-lived, and avoiding manual
+            // RemoveActorVfx prevents crashes from stale/native handles on repeated target checks.
+            var handle = createActorVfx(path, targetAddress, targetAddress, -1f, '\0', 0, '\0');
+            return handle != IntPtr.Zero;
+        }
+        catch (Exception ex)
+        {
+            SimpleLog.Error(ex, $"Oh Hey failed to spawn Exclamation VFX from {path}.");
+            return false;
+        }
+    }
+
+    private bool TryInitializeVfx()
+    {
+        if (createActorVfx != null)
+        {
+            return true;
+        }
+
+        if (vfxInitializationFailed)
+        {
+            return false;
+        }
+
+        var createAddress = ScanSignature(CreateActorVfxSignature);
+        if (createAddress == IntPtr.Zero)
+        {
+            vfxInitializationFailed = true;
+            LogVfxUnavailable("Unable to find the actor VFX create function for this game/Dalamud build.");
+            return false;
+        }
+
+        try
+        {
+            createActorVfx = Marshal.GetDelegateForFunctionPointer<CreateActorVfxDelegate>(createAddress);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            vfxInitializationFailed = true;
+            SimpleLog.Error(ex, "Oh Hey failed to initialize actor VFX delegate.");
+            return false;
+        }
+    }
+
+    private static nint ScanSignature(string signature)
+    {
+        var scanner = GetServiceByNameOrType("SigScanner");
+        if (scanner == null)
+        {
+            return IntPtr.Zero;
+        }
+
+        var scanText = scanner.GetType().GetMethod("ScanText", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [typeof(string)], null);
+        if (scanText == null)
+        {
+            return IntPtr.Zero;
+        }
+
+        try
+        {
+            var result = scanText.Invoke(scanner, [signature]);
+            return result is IntPtr pointer ? pointer : IntPtr.Zero;
+        }
+        catch
+        {
+            return IntPtr.Zero;
+        }
+    }
+
+    private static bool GameFileExists(string path)
+    {
+        var dataManager = GetServiceByNameOrType("DataManager");
+        if (dataManager == null)
+        {
+            return true;
+        }
+
+        var fileExists = dataManager.GetType().GetMethod("FileExists", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [typeof(string)], null);
+        if (fileExists == null)
+        {
+            return true;
+        }
+
+        try
+        {
+            return fileExists.Invoke(dataManager, [path]) is true;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static object? GetServiceByNameOrType(string namePart)
+    {
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        var serviceType = typeof(Service);
+
+        foreach (var property in serviceType.GetProperties(flags))
+        {
+            if (!property.Name.Contains(namePart, StringComparison.OrdinalIgnoreCase) && !property.PropertyType.Name.Contains(namePart, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                return property.GetValue(null);
+            }
+            catch
+            {
+                // Try the next matching service member.
+            }
+        }
+
+        foreach (var field in serviceType.GetFields(flags))
+        {
+            if (!field.Name.Contains(namePart, StringComparison.OrdinalIgnoreCase) && !field.FieldType.Name.Contains(namePart, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                return field.GetValue(null);
+            }
+            catch
+            {
+                // Try the next matching service member.
+            }
+        }
+
+        return null;
+    }
+
+    private static nint GetObjectAddress(IPlayerCharacter player)
+    {
+        try
+        {
+            var addressProperty = player.GetType().GetProperty("Address", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (addressProperty?.GetValue(player) is IntPtr address)
+            {
+                return address;
+            }
+        }
+        catch
+        {
+            // Some Dalamud wrapper implementations may hide the native pointer differently.
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private void LogVfxUnavailable(string message)
+    {
+        if (hasLoggedVfxUnavailable)
+        {
+            return;
+        }
+
+        hasLoggedVfxUnavailable = true;
+        SimpleLog.Verbose($"Oh Hey Exclamation VFX unavailable: {message}");
     }
 
     private void PlayTargetSound()

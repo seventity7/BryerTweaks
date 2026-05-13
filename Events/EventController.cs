@@ -282,21 +282,29 @@ public static unsafe class EventController {
     }
     
     private static void HandleFrameworkUpdate(IFramework framework) {
-        foreach (var fwSubscriber in FrameworkUpdateSubscribers) {
-            fwSubscriber.Invoke(null);
+        foreach (var fwSubscriber in FrameworkUpdateSubscribers.ToArray()) {
+            try {
+                fwSubscriber.Invoke(null);
+            } catch (Exception ex) {
+                SimpleLog.Error(ex, $"Unhandled framework event error in {fwSubscriber.Tweak.Key}::{fwSubscriber.Method.Name}.");
+            }
         }
     }
 
     private static void HandleTerritoryChanged(uint newTerritory) {
-        foreach (var tcSubscriber in TerritoryChangedSubscribers) {
-            tcSubscriber.Invoke(newTerritory);
+        foreach (var tcSubscriber in TerritoryChangedSubscribers.ToArray()) {
+            try {
+                tcSubscriber.Invoke(newTerritory);
+            } catch (Exception ex) {
+                SimpleLog.Error(ex, $"Unhandled territory event error in {tcSubscriber.Tweak.Key}::{tcSubscriber.Method.Name}.");
+            }
         }
     }
 
     private static void HandleEvent(AddonEvent type, AddonArgs args) {
         if (!AddonEventSubscribers.TryGetValue(type, out var addonSubscriberDict)) return;
         if (addonSubscriberDict.TryGetValue(args.AddonName, out var addonSubscriberList)) {
-            foreach (var subscriber in addonSubscriberList) {
+            foreach (var subscriber in addonSubscriberList.ToArray()) {
                 if (subscriber.Tweak.IsDisposed) continue;
                 if (!subscriber.Tweak.Enabled) continue;
                 subscriber.Invoke(args);
@@ -304,7 +312,7 @@ public static unsafe class EventController {
         }
 
         if (addonSubscriberDict.TryGetValue("ALL_ADDONS", out var allAddonSubscriberList)) {
-            foreach (var subscriber in allAddonSubscriberList) {
+            foreach (var subscriber in allAddonSubscriberList.ToArray()) {
                 if (subscriber.Tweak.IsDisposed) continue;
                 if (!subscriber.Tweak.Enabled) continue;
                 subscriber.Invoke(args);

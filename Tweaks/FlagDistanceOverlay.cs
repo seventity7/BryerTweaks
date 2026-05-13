@@ -19,6 +19,11 @@ namespace BryerTweaks.Tweaks;
 public unsafe class FlagDistanceOverlay : Tweak {
     private const uint UmbraDirectionArrowIconId = 60541;
 
+    private static readonly Vector4 IconShadowColor = new(0.929f, 0.384f, 0.384f, 0.78f); // #ED6262
+    private const float IconShadowBaseScale = 1.34f;
+    private const float IconShadowPulseScale = 0.18f;
+    private const float IconShadowPulseSpeed = 2.85f;
+
     public class Configs : TweakConfig {
         public bool ShowOverlay = true;
         public bool ShowWhenMapOpen = true;
@@ -31,6 +36,7 @@ public unsafe class FlagDistanceOverlay : Tweak {
 
         // Umbra compass options.
         public int CompassRadius = 750;
+        public float OverlayScale = 1.0f;
         public int IconScaleFactor = 100;
         public int IconOpacity = 100;
         public int SafeZoneOffsetWidth = 0;
@@ -84,6 +90,9 @@ public unsafe class FlagDistanceOverlay : Tweak {
 
         ImGui.SetNextItemWidth(170f * ImGuiHelpers.GlobalScale);
         hasChanged |= ImGui.SliderInt("Compass Radius", ref Config.CompassRadius, 8, 800);
+
+        ImGui.SetNextItemWidth(170f * ImGuiHelpers.GlobalScale);
+        hasChanged |= ImGui.SliderFloat("Overlay Scale", ref Config.OverlayScale, 0.50f, 2.00f, "%.2fx");
 
         ImGui.SetNextItemWidth(170f * ImGuiHelpers.GlobalScale);
         hasChanged |= ImGui.SliderInt("Icon Scale", ref Config.IconScaleFactor, 50, 200, "%d%%");
@@ -235,17 +244,20 @@ public unsafe class FlagDistanceOverlay : Tweak {
     }
 
     private void DrawWorldMarker(ImDrawListPtr drawList, Vector2 screenPos, uint iconId, float distance, float opacity) {
-        var iconSize = 32f * (Config.IconScaleFactor / 100f) * ImGuiHelpers.GlobalScale;
-        var iconCenter = screenPos - new Vector2(0f, 8f * ImGuiHelpers.GlobalScale);
+        var overlayScale = GetOverlayScale();
+        var iconSize = 32f * (Config.IconScaleFactor / 100f) * overlayScale * ImGuiHelpers.GlobalScale;
+        var iconCenter = screenPos - new Vector2(0f, 8f * overlayScale * ImGuiHelpers.GlobalScale);
+        DrawIconShadow(drawList, iconId, iconCenter, new Vector2(iconSize), opacity);
         DrawIcon(drawList, iconId, iconCenter, new Vector2(iconSize), opacity);
 
         DrawSoftLabel(
             drawList,
             GetDistanceLabel(distance),
-            iconCenter + new Vector2(0f, iconSize * 0.62f + 14f * ImGuiHelpers.GlobalScale),
+            iconCenter + new Vector2(0f, iconSize * 0.62f + 14f * overlayScale * ImGuiHelpers.GlobalScale),
             Config.TextColor,
             Config.TextShadowColor,
-            opacity);
+            opacity,
+            overlayScale);
     }
 
     private void DrawCompassMarker(Vector3 playerPosition, Vector3 markerPosition, uint iconId, float opacity) {
@@ -253,7 +265,8 @@ public unsafe class FlagDistanceOverlay : Tweak {
         var viewport = ImGui.GetMainViewport();
         var vpMin = viewport.Pos;
         var vpMax = viewport.Pos + viewport.Size;
-        var iconSize = 35f * (Config.IconScaleFactor / 100f) * ImGuiHelpers.GlobalScale;
+        var overlayScale = GetOverlayScale();
+        var iconSize = 35f * (Config.IconScaleFactor / 100f) * overlayScale * ImGuiHelpers.GlobalScale;
         var clampSize = iconSize * 2.5f;
 
         Vector2 playerScreen;
@@ -269,11 +282,13 @@ public unsafe class FlagDistanceOverlay : Tweak {
         iconPos.Y = Math.Clamp(iconPos.Y, vpMin.Y + clampSize + Config.SafeZoneOffsetHeight, vpMax.Y - clampSize - Config.SafeZoneOffsetHeight);
         iconPos = StabilizePosition(ref stableFlagCompassPosition, SnapToPixel(iconPos), 1.5f, 30f);
 
+        DrawIconShadow(drawList, iconId, iconPos, new Vector2(iconSize), opacity);
         DrawIcon(drawList, iconId, iconPos, new Vector2(iconSize), opacity);
 
         var angle = MathF.Atan2(direction.Y, direction.X);
-        var arrowSize = 23f * (Config.IconScaleFactor / 100f) * ImGuiHelpers.GlobalScale;
-        var arrowCenter = iconPos + direction * (iconSize * 0.75f + arrowSize * 0.55f);
+        var arrowSize = 23f * (Config.IconScaleFactor / 100f) * overlayScale * ImGuiHelpers.GlobalScale;
+        var arrowCenter = SnapToPixel(iconPos + direction * (iconSize * 0.75f + arrowSize * 0.55f));
+        DrawRotatedIconShadow(drawList, UmbraDirectionArrowIconId, arrowCenter, new Vector2(arrowSize * 2f), angle, opacity * 0.82f);
         DrawRotatedIcon(drawList, UmbraDirectionArrowIconId, arrowCenter, new Vector2(arrowSize * 2f), angle, opacity);
     }
 
@@ -292,6 +307,128 @@ public unsafe class FlagDistanceOverlay : Tweak {
 
         return direction.LengthSquared() < 0.001f ? new Vector2(0f, -1f) : Vector2.Normalize(direction);
     }
+
+    private void DrawIconShadow(ImDrawListPtr drawList, uint iconId, Vector2 center, Vector2 size, float opacity) {
+        var wrap = GetIcon(iconId);
+        if (wrap == null) {
+            DrawFallbackShadow(drawList, center, size, opacity);
+            return;
+        }
+
+        var pulse = GetIconShadowPulse();
+        var spread = (3.0f + 3.2f * pulse) * ImGuiHelpers.GlobalScale;
+        var alpha = IconShadowColor.W * opacity * (0.22f + 0.16f * pulse);
+
+        DrawSoftIconTextureShadow(drawList, wrap.Handle, center, size, spread, alpha);
+    }
+
+    private void DrawRotatedIconShadow(ImDrawListPtr drawList, uint iconId, Vector2 center, Vector2 size, float rotation, float opacity) {
+        var wrap = GetIcon(iconId);
+        if (wrap == null) {
+            DrawFallbackShadow(drawList, center, size, opacity);
+            return;
+        }
+
+        var pulse = GetIconShadowPulse();
+        var shadowScale = IconShadowBaseScale + IconShadowPulseScale * pulse;
+        var shadowSize = size * shadowScale;
+        var shadowAlpha = IconShadowColor.W * opacity * (0.52f + 0.32f * pulse);
+        var shadowColor = ImGui.GetColorU32(new Vector4(IconShadowColor.X, IconShadowColor.Y, IconShadowColor.Z, shadowAlpha));
+
+        var half = shadowSize / 2f;
+        var corners = new[] {
+            new Vector2(-half.X, -half.Y),
+            new Vector2(half.X, -half.Y),
+            new Vector2(half.X, half.Y),
+            new Vector2(-half.X, half.Y),
+        };
+
+        var cos = MathF.Cos(rotation);
+        var sin = MathF.Sin(rotation);
+
+        for (var i = 0; i < corners.Length; i++) {
+            var c = corners[i];
+            corners[i] = center + new Vector2(c.X * cos - c.Y * sin, c.X * sin + c.Y * cos);
+        }
+
+        drawList.AddImageQuad(
+            wrap.Handle,
+            corners[0],
+            corners[1],
+            corners[2],
+            corners[3],
+            Vector2.UnitY,
+            Vector2.Zero,
+            Vector2.UnitX,
+            Vector2.One,
+            shadowColor);
+    }
+
+    private static void DrawFallbackShadow(ImDrawListPtr drawList, Vector2 center, Vector2 size, float opacity) {
+        var pulse = GetIconShadowPulse();
+        var spread = (3.0f + 3.2f * pulse) * ImGuiHelpers.GlobalScale;
+        var alpha = IconShadowColor.W * opacity * (0.18f + 0.14f * pulse);
+
+        DrawSoftFallbackIconShadow(drawList, center, size, spread, alpha);
+    }
+
+    private static void DrawSoftIconTextureShadow(ImDrawListPtr drawList, ImTextureID textureHandle, Vector2 center, Vector2 size, float spread, float alpha) {
+        var offsets = GetShadowOffsets(spread);
+
+        for (var i = offsets.Length - 1; i >= 0; i--) {
+            var offset = offsets[i].Offset;
+            var weight = offsets[i].Weight;
+            var color = ImGui.GetColorU32(new Vector4(
+                IconShadowColor.X,
+                IconShadowColor.Y,
+                IconShadowColor.Z,
+                Math.Clamp(alpha * weight, 0f, 1f)));
+
+            var shadowCenter = SnapToPixel(center + offset);
+            var min = shadowCenter - size / 2f;
+            var max = shadowCenter + size / 2f;
+
+            drawList.AddImage(textureHandle, min, max, Vector2.Zero, Vector2.One, color);
+        }
+    }
+
+    private static void DrawSoftFallbackIconShadow(ImDrawListPtr drawList, Vector2 center, Vector2 size, float spread, float alpha) {
+        var offsets = GetShadowOffsets(spread);
+        var scale = size.X / 32f;
+
+        for (var i = offsets.Length - 1; i >= 0; i--) {
+            var offset = offsets[i].Offset;
+            var weight = offsets[i].Weight;
+            var color = ImGui.GetColorU32(new Vector4(
+                IconShadowColor.X,
+                IconShadowColor.Y,
+                IconShadowColor.Z,
+                Math.Clamp(alpha * weight, 0f, 1f)));
+
+            DrawFallbackIcon(drawList, SnapToPixel(center + offset), scale, color);
+        }
+    }
+
+    private static (Vector2 Offset, float Weight)[] GetShadowOffsets(float spread) {
+        return [
+            (new Vector2(-spread, 0f), 0.36f),
+            (new Vector2(spread, 0f), 0.36f),
+            (new Vector2(0f, -spread), 0.36f),
+            (new Vector2(0f, spread), 0.36f),
+            (new Vector2(-spread * 0.72f, -spread * 0.72f), 0.28f),
+            (new Vector2(spread * 0.72f, -spread * 0.72f), 0.28f),
+            (new Vector2(spread * 0.72f, spread * 0.72f), 0.28f),
+            (new Vector2(-spread * 0.72f, spread * 0.72f), 0.28f),
+            (new Vector2(-spread * 0.42f, 0f), 0.50f),
+            (new Vector2(spread * 0.42f, 0f), 0.50f),
+            (new Vector2(0f, -spread * 0.42f), 0.50f),
+            (new Vector2(0f, spread * 0.42f), 0.50f),
+            (Vector2.Zero, 0.42f),
+        ];
+    }
+
+    private static float GetIconShadowPulse()
+        => (MathF.Sin((float)DateTime.UtcNow.TimeOfDay.TotalSeconds * IconShadowPulseSpeed * MathF.Tau) + 1f) * 0.5f;
 
     private void DrawIcon(ImDrawListPtr drawList, uint iconId, Vector2 center, Vector2 size, float opacity) {
         var wrap = GetIcon(iconId);
@@ -368,19 +505,20 @@ public unsafe class FlagDistanceOverlay : Tweak {
             color);
     }
 
-    private static void DrawSoftLabel(ImDrawListPtr drawList, string text, Vector2 center, Vector4 textColor, Vector4 shadowColor, float opacity) {
+    private static void DrawSoftLabel(ImDrawListPtr drawList, string text, Vector2 center, Vector4 textColor, Vector4 shadowColor, float opacity, float fontScale = 1.0f) {
         center = SnapToPixel(center);
 
+        fontScale = Math.Clamp(fontScale, 0.50f, 2.00f);
         var font = ImGui.GetFont();
-        var fontSize = ImGui.GetFontSize();
-        var textSize = ImGui.CalcTextSize(text);
+        var fontSize = ImGui.GetFontSize() * fontScale;
+        var textSize = ImGui.CalcTextSize(text) * fontScale;
         var pos = SnapToPixel(center - textSize / 2f);
 
         var shadow = shadowColor;
         shadow.W *= opacity;
 
         for (var layer = 4; layer >= 1; layer--) {
-            var radius = MathF.Round(layer * 1.3f * ImGuiHelpers.GlobalScale);
+            var radius = MathF.Round(layer * 1.3f * fontScale * ImGuiHelpers.GlobalScale);
             var alpha = shadow.W * (0.16f / layer);
             var c = ImGui.GetColorU32(new Vector4(shadow.X, shadow.Y, shadow.Z, alpha));
             drawList.AddText(font, fontSize, pos + new Vector2(radius, 0f), c, text);
@@ -454,11 +592,15 @@ public unsafe class FlagDistanceOverlay : Tweak {
         Config.FadeAttenuation = Math.Clamp(Config.FadeAttenuation, 0, 100);
         Config.MaxVisibleDistance = Math.Clamp(Config.MaxVisibleDistance, 0, 5000);
         Config.CompassRadius = Math.Clamp(Config.CompassRadius, 8, 800);
+        Config.OverlayScale = Math.Clamp(Config.OverlayScale, 0.50f, 2.00f);
         Config.IconScaleFactor = Math.Clamp(Config.IconScaleFactor, 50, 200);
         Config.IconOpacity = Math.Clamp(Config.IconOpacity, 0, 100);
         Config.MarkerScale = Math.Clamp(Config.MarkerScale, 0.60f, 1.80f);
         Config.HideDistance = Math.Clamp(Config.HideDistance, 0f, 100f);
     }
+
+    private float GetOverlayScale()
+        => Math.Clamp(Config.OverlayScale, 0.50f, 2.00f);
 
     private static Vector2 StabilizePosition(ref Vector2? previous, Vector2 target, float deadzonePixels, float snapDistancePixels) {
         target = SnapToPixel(target);
