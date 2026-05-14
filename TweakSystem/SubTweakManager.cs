@@ -88,13 +88,18 @@ public abstract class SubTweakManager<T> : SubTweakManager where T : BaseTweak {
         foreach (var t in SubTweaks) {
             if (t is IDisabledTweak) continue;
             if (t is not T subT) continue;
-            if (PluginConfig.EnabledTweaks.Contains(GetTweakKey(subT))) {
-                try {
-                    SimpleLog.Log($"Enable: {t.Name} @ {Name}");
-                    t.InternalEnable();
-                } catch (Exception ex) {
-                    Plugin.Error(this, t, ex, true, $"Error in Enable for '{t.Name}' @ '{this.Name}'");
-                }
+            if (!PluginConfig.EnabledTweaks.Contains(GetTweakKey(subT))) continue;
+
+            if (AlwaysEnabled && Plugin.ShouldDeferSavedTweakEnable()) {
+                Plugin.QueueStartupTweakEnable(t);
+                continue;
+            }
+
+            try {
+                SimpleLog.Log($"Enable: {t.Name} @ {Name}");
+                t.InternalEnable();
+            } catch (Exception ex) {
+                Plugin.Error(this, t, ex, true, $"Error in Enable for '{t.Name}' @ '{this.Name}'");
             }
         }
 #endif

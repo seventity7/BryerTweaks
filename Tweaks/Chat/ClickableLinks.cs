@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Dalamud.Game.Chat;
@@ -7,7 +8,6 @@ using Dalamud.Game.Text.SeStringHandling.Payloads;
 using BryerTweaks.Enums;
 using BryerTweaks.TweakSystem;
 using BryerTweaks.Utility;
-using System;
 
 namespace BryerTweaks.Tweaks.Chat;
 

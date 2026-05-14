@@ -455,7 +455,7 @@ public partial class BryerTweaksConfig : IPluginConfiguration {
     private void DrawTweaksHeader(IReadOnlyCollection<BaseTweak> allTweaks, bool showButton, string buttonText, uint buttonColor) {
         var scale = ImGuiHelpers.GlobalScale;
         var enabledCount = allTweaks.Count(tweak => tweak.Enabled);
-        var favoriteCount = allTweaks.Count(tweak => FavoriteTweaks.Contains(tweak.Key));
+        var favoriteCount = allTweaks.Count(tweak => FavoriteTweaks.Contains(tweak.Key) && IsTweakVisible(tweak));
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.10f, 0.13f, 0.92f));
         ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0.24f, 0.42f, 0.58f, 0.55f));

@@ -48,6 +48,7 @@ namespace BryerTweaks {
         private readonly List<BaseTweak> pendingStartupTweaks = new();
         private int startupEnableDelayTicks = -1;
         private bool processingStartupTweaks;
+        private bool startupTweakEnableCompleted;
         
         internal CultureInfo Culture {
             get {
@@ -306,13 +307,19 @@ namespace BryerTweaks {
             if (pendingStartupTweaks.Contains(tweak)) return;
 
             pendingStartupTweaks.Add(tweak);
+            startupTweakEnableCompleted = false;
             startupEnableDelayTicks = -1;
             SimpleLog.Debug($"Queued delayed startup enable for {tweak.Name}.");
         }
 
+        internal bool ShouldDeferSavedTweakEnable() => !startupTweakEnableCompleted;
+
         private void ProcessStartupTweakEnableQueue() {
             if (processingStartupTweaks) return;
-            if (pendingStartupTweaks.Count == 0) return;
+            if (pendingStartupTweaks.Count == 0) {
+                startupTweakEnableCompleted = true;
+                return;
+            }
 
             if (!IsCharacterReadyForStartupTweaks()) {
                 startupEnableDelayTicks = -1;
@@ -344,6 +351,7 @@ namespace BryerTweaks {
                 }
             } finally {
                 processingStartupTweaks = false;
+                if (pendingStartupTweaks.Count == 0) startupTweakEnableCompleted = true;
             }
         }
 
@@ -536,7 +544,9 @@ namespace BryerTweaks {
             PluginConfig.Save();
             foreach (var tp in TweakProviders.Where(tp => !tp.IsDisposed)) {
                 foreach (var t in tp.Tweaks) {
-                    t.RequestSaveConfig();
+                    if (t.ShouldSaveConfigOnPluginShutdown()) {
+                        t.RequestSaveConfig();
+                    }
                 }
             }
         }

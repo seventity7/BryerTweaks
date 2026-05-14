@@ -36,6 +36,9 @@ public abstract class BaseTweak {
     protected virtual bool Unloading { get; private set; } = true;
 
     private bool hasPreviewImage;
+    private bool autoConfigLoaded;
+
+    internal bool HasLoadedAutoConfig => autoConfigLoaded;
 
     public bool IsDisposed { get; private set; }
 
@@ -287,6 +290,15 @@ public abstract class BaseTweak {
         }
     }
 
+    internal bool ShouldSaveConfigOnPluginShutdown() {
+        if (!UseAutoConfig || TweakAutoConfigAttribute is NoAutoConfig || !TweakAutoConfigAttribute.AutoSaveLoad) return true;
+
+        // Delayed startup enabling means a tweak can exist for a while before its
+        // config has been loaded from disk. Saving during that window would write
+        // the freshly constructed default config over the user's real config.
+        return autoConfigLoaded || Enabled;
+    }
+
     public bool DrawConfigUI(ref bool hasChanged) {
         var shouldForceOpenConfig = ForceOpenConfig;
         #if DEBUG
@@ -296,7 +308,9 @@ public abstract class BaseTweak {
         #endif
         ForceOpenConfig = false;
         var configTreeOpen = false;
-        if ((this is CommandTweak || UseAutoConfig || DrawConfigTree != null) && (Enabled || this is CommandTweak)) {
+        var savedAsEnabled = PluginConfig.EnabledTweaks.Contains(Key);
+        var canShowSavedConfig = Enabled || savedAsEnabled || HasLoadedAutoConfig || this is CommandTweak;
+        if ((this is CommandTweak || UseAutoConfig || DrawConfigTree != null) && canShowSavedConfig) {
             var x = ImGui.GetCursorPosX();
             if (shouldForceOpenConfig) ImGui.SetNextItemOpen(true);
             if (ImGui.TreeNode($"{LocalizedName}##treeConfig_{GetType().Name}")) {
@@ -304,7 +318,10 @@ public abstract class BaseTweak {
                 DrawCommon();
                 ImGui.SetCursorPosX(x);
                 ImGui.BeginGroup();
-                if (Enabled && UseAutoConfig) DrawAutoConfig(ref hasChanged);
+                if (!Enabled && savedAsEnabled) {
+                    ImGui.TextDisabled("Saved settings are shown below. This tweak will not be enabled until the delayed startup safety check passes, or until you enable it manually.");
+                }
+                if (UseAutoConfig && (Enabled || HasLoadedAutoConfig)) DrawAutoConfig(ref hasChanged);
                 if (Enabled) DrawConfigTree?.Invoke(ref hasChanged);
                 if (this is CommandTweak ct) {
                     if (Enabled && (UseAutoConfig || DrawConfigTree != null)) ImGui.Text("Customize Commands:");
@@ -581,6 +598,10 @@ public abstract class BaseTweak {
         Setup();
         hasPreviewImage = File.Exists(Path.Join(PluginInterface.AssemblyLocation.DirectoryName, "TweakPreviews", $"{Key}.png"));
 
+        if (UseAutoConfig && TweakAutoConfigAttribute is not NoAutoConfig && TweakAutoConfigAttribute.AutoSaveLoad) {
+            AutoLoadConfig();
+        }
+
         AttemptDrawConfigSetup();
         Ready = true;
     }
@@ -618,6 +639,8 @@ public abstract class BaseTweak {
         } else {
             configProperty.SetValue(this, config);
         }
+
+        autoConfigLoaded = true;
     }
 
     private void AutoSaveConfig() {
@@ -658,7 +681,7 @@ public abstract class BaseTweak {
         }
 
         // Auto Load Config
-        if (UseAutoConfig && TweakAutoConfigAttribute is not NoAutoConfig && TweakAutoConfigAttribute.AutoSaveLoad) {
+        if (!autoConfigLoaded && UseAutoConfig && TweakAutoConfigAttribute is not NoAutoConfig && TweakAutoConfigAttribute.AutoSaveLoad) {
             AutoLoadConfig();
         }
 

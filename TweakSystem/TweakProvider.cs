@@ -56,9 +56,18 @@ public class TweakProvider : IDisposable {
                     #if !TEST
                     if (tweak is not IDisabledTweak) {
                         tweak.SetupInternal();
-                        if (tweak.Ready && (BryerTweaks.Plugin.PluginConfig.EnabledTweaks.Contains(tweak.Key) || tweak is SubTweakManager { AlwaysEnabled: true })) {
-                            SimpleLog.Debug($"Queue startup enable: {t.Name}");
-                            BryerTweaks.Plugin.QueueStartupTweakEnable(tweak);
+                        if (tweak.Ready) {
+                            if (tweak is SubTweakManager { AlwaysEnabled: true }) {
+                                try {
+                                    SimpleLog.Debug($"Enable always-on tweak manager: {t.Name}");
+                                    tweak.InternalEnable();
+                                } catch (Exception ex) {
+                                    BryerTweaks.Plugin.Error(tweak, ex, true, $"Error while enabling always-on tweak manager '{tweak.Name}'");
+                                }
+                            } else if (BryerTweaks.Plugin.PluginConfig.EnabledTweaks.Contains(tweak.Key)) {
+                                SimpleLog.Debug($"Queue startup enable: {t.Name}");
+                                BryerTweaks.Plugin.QueueStartupTweakEnable(tweak);
+                            }
                         }
                     }
                     #endif
