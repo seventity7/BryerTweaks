@@ -529,11 +529,6 @@ namespace BryerTweaks {
 
         public void SaveAllConfig() {
             PluginConfig.Save();
-            foreach (var tp in TweakProviders.Where(tp => !tp.IsDisposed)) {
-                foreach (var t in tp.Tweaks) {
-                    t.RequestSaveConfig();
-                }
-            }
         }
 
         public void RemoveCommands() {

@@ -286,6 +286,52 @@ public abstract class BaseTweak {
             SimpleLog.Error(ex);
         }
     }
+    internal bool TryExportCurrentConfig(out string? configKey, out string? json) {
+        configKey = null;
+        json = null;
+
+        try {
+            var configProperty = GetType()
+                .GetProperties(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .FirstOrDefault(p => p.PropertyType.IsSubclassOf(typeof(TweakConfig)));
+
+            if (configProperty == null) return false;
+
+            var configObj = configProperty.GetValue(this);
+            if (configObj == null) return false;
+
+            configKey = TweakAutoConfigAttribute.ConfigKey ?? Key;
+            json = JsonConvert.SerializeObject(configObj, Formatting.Indented);
+            return !string.IsNullOrWhiteSpace(json);
+        } catch (Exception ex) {
+            SimpleLog.Error($"Failed to export current config for tweak: {Name}");
+            SimpleLog.Error(ex);
+            return false;
+        }
+    }
+
+    internal bool TryImportCurrentConfig(string json) {
+        try {
+            if (string.IsNullOrWhiteSpace(json)) return false;
+
+            var configProperty = GetType()
+                .GetProperties(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .FirstOrDefault(p => p.PropertyType.IsSubclassOf(typeof(TweakConfig)));
+
+            if (configProperty == null) return false;
+
+            var configObj = JsonConvert.DeserializeObject(json, configProperty.PropertyType);
+            if (configObj == null) return false;
+
+            configProperty.SetValue(this, configObj);
+            return true;
+        } catch (Exception ex) {
+            SimpleLog.Error($"Failed to import current config for tweak: {Name}");
+            SimpleLog.Error(ex);
+            return false;
+        }
+    }
+
 
     public bool DrawConfigUI(ref bool hasChanged) {
         var shouldForceOpenConfig = ForceOpenConfig;

@@ -747,6 +747,14 @@ public partial class BryerTweaksConfig : IPluginConfiguration {
                     ImGui.SameLine();
                     ImGuiComponents.HelpMarker("BryerTweaks collects a list of enabled tweaks to give me an idea of which tweaks are being used. You can choose to opt out of this data collection and no information will be sent. No identifying information will be collected in any way.");
 
+                    if (ModernConfigUi.Button("Export Config")) {
+                        OpenExportConfigDialog();
+                    }
+                    ImGui.SameLine();
+                    if (ModernConfigUi.Button("Import")) {
+                        OpenImportConfigDialog();
+                    }
+
                     ModernConfigUi.FadedSeparator();
 
                     if (ImGui.CollapsingHeader(Loc.Localize("General Options / Visible Category Tabs", "Visible Category Tabs") + $" ({tweakCategories.Count + (ShowAllTweaksTab ? 1 : 0) + (ShowEnabledTweaksTab ? 1 : 0)})###visibleCategoryTabs") ) {
@@ -827,14 +835,6 @@ ImGui.Unindent();
                         if (ImGui.Checkbox("Disable Automatic opening of debug window", ref DisableAutoOpenDebug)) Save();
                         ModernConfigUi.FadedSeparator();
                         if (ImGui.Checkbox("Remove File Info From Logs", ref NoCallerInLog)) Save();
-                        ModernConfigUi.FadedSeparator();
-                        if (ModernConfigUi.Button("Export Config")) {
-                            OpenExportConfigDialog();
-                        }
-                        ImGui.SameLine();
-                        if (ModernConfigUi.Button("Import Config")) {
-                            OpenImportConfigDialog();
-                        }
                         ImGui.Unindent();
                     }
                     ModernConfigUi.FadedSeparator();
@@ -1178,7 +1178,7 @@ ImGui.Unindent();
             Directory.CreateDirectory(configDirectory);
 
             var bundle = new PluginConfigExportBundle {
-                ExportVersion = 1,
+                ExportVersion = 2,
                 PluginName = plugin.Name,
                 CreatedAtUtc = DateTime.UtcNow,
                 PluginConfigJson = JsonConvert.SerializeObject(this, Formatting.Indented),
@@ -1189,6 +1189,14 @@ ImGui.Unindent();
                 var fileName = Path.GetFileName(file);
                 if (string.IsNullOrWhiteSpace(fileName)) continue;
                 bundle.ConfigFiles[fileName] = File.ReadAllText(file);
+            }
+
+            foreach (var tweak in plugin.Tweaks) {
+                if (!tweak.TryExportCurrentConfig(out var configKey, out var json)) continue;
+                if (string.IsNullOrWhiteSpace(configKey) || string.IsNullOrWhiteSpace(json)) continue;
+
+                bundle.LiveTweakConfigs[configKey] = json;
+                bundle.ConfigFiles[$"{configKey}.json"] = json;
             }
 
             if (!Path.HasExtension(path)) {
@@ -1239,6 +1247,12 @@ ImGui.Unindent();
             File.WriteAllText(destination, pair.Value ?? string.Empty);
         }
 
+        foreach (var pair in bundle.LiveTweakConfigs) {
+            if (string.IsNullOrWhiteSpace(pair.Key)) continue;
+            var destination = Path.Combine(configDirectory, $"{pair.Key}.json");
+            File.WriteAllText(destination, pair.Value ?? string.Empty);
+        }
+
         JsonConvert.PopulateObject(
             bundle.PluginConfigJson,
             this,
@@ -1249,17 +1263,25 @@ ImGui.Unindent();
         HiddenTweaks.RemoveAll(t => EnabledTweaks.Contains(t));
         Save();
 
-        ReloadTweaksAfterConfigImport();
+        ReloadTweaksAfterConfigImport(bundle.LiveTweakConfigs);
         RefreshSearch();
         RebuildTweakList();
 
         ShowConfigTransferPopup("Plugin configuration loaded with success!");
     }
 
-    private void ReloadTweaksAfterConfigImport() {
+    private void ReloadTweaksAfterConfigImport(Dictionary<string, string>? liveTweakConfigs = null) {
         foreach (var provider in plugin.TweakProviders.Where(provider => !provider.IsDisposed).ToList()) {
             provider.UnloadTweaks();
             provider.LoadTweaks();
+        }
+
+        if (liveTweakConfigs is { Count: > 0 }) {
+            foreach (var tweak in plugin.Tweaks) {
+                if (liveTweakConfigs.TryGetValue(tweak.Key, out var json)) {
+                    tweak.TryImportCurrentConfig(json);
+                }
+            }
         }
 
         plugin.SetupLocalization();
@@ -1327,6 +1349,7 @@ ImGui.Unindent();
         public string PluginConfigJson { get; set; } = string.Empty;
         public WindowConfigExport? WindowConfig { get; set; }
         public Dictionary<string, string> ConfigFiles { get; set; } = new();
+        public Dictionary<string, string> LiveTweakConfigs { get; set; } = new();
     }
 
     private sealed class WindowConfigExport {
