@@ -30,6 +30,10 @@ namespace BryerTweaks {
 
         public List<TweakProvider> TweakProviders = new();
 
+        private readonly Dictionary<BaseTweak, string> startupTweakEnableQueue = new();
+        private bool collectingStartupTweakEnableQueue;
+        private int startupTweakEnableReadyFrames;
+
         public string AssemblyLocation { get; private set; } = Assembly.GetExecutingAssembly().Location;
         
         public static BryerTweaks Plugin { get; private set; }
@@ -263,14 +267,19 @@ namespace BryerTweaks {
 
             SetupCommands();
 
-            var simpleTweakProvider = new TweakProvider(Assembly.GetExecutingAssembly());
-            simpleTweakProvider.LoadTweaks();
-            
-            
-            TweakProviders.Add(simpleTweakProvider);
+            collectingStartupTweakEnableQueue = true;
+            try {
+                var simpleTweakProvider = new TweakProvider(Assembly.GetExecutingAssembly());
+                simpleTweakProvider.LoadTweaks();
+                
+                
+                TweakProviders.Add(simpleTweakProvider);
 
-            foreach (var provider in PluginConfig.CustomTweakProviders) {
-                LoadCustomProvider(provider);
+                foreach (var provider in PluginConfig.CustomTweakProviders) {
+                    LoadCustomProvider(provider);
+                }
+            } finally {
+                collectingStartupTweakEnableQueue = false;
             }
 
 
@@ -289,7 +298,57 @@ namespace BryerTweaks {
         }
         
 
-        private void FrameworkOnUpdate(IFramework framework) => Common.InvokeFrameworkUpdate();
+        private void FrameworkOnUpdate(IFramework framework) {
+            Common.InvokeFrameworkUpdate();
+            ProcessStartupTweakEnableQueue();
+        }
+
+        internal bool QueueStartupTweakEnable(BaseTweak tweak, string? enabledKey = null) {
+            if (!collectingStartupTweakEnableQueue) return false;
+
+            enabledKey ??= tweak.Key;
+            if (startupTweakEnableQueue.ContainsKey(tweak)) return true;
+
+            SimpleLog.Debug($"Queue startup enable: {tweak.Name}");
+            startupTweakEnableQueue[tweak] = enabledKey;
+            return true;
+        }
+
+        private void ProcessStartupTweakEnableQueue() {
+            if (startupTweakEnableQueue.Count == 0) return;
+
+            if (!IsSafeToEnableStartupTweaks()) {
+                startupTweakEnableReadyFrames = 0;
+                return;
+            }
+
+            if (++startupTweakEnableReadyFrames < 120) return;
+
+            var queuedTweaks = startupTweakEnableQueue.ToArray();
+            startupTweakEnableQueue.Clear();
+
+            foreach (var (tweak, enabledKey) in queuedTweaks) {
+                if (tweak.IsDisposed || tweak.Enabled) continue;
+                if (!PluginConfig.EnabledTweaks.Contains(enabledKey)) continue;
+
+                try {
+                    SimpleLog.Debug($"Delayed startup enable: {tweak.Name}");
+                    tweak.InternalEnable();
+                } catch (Exception ex) {
+                    Error(tweak, ex, true, $"Error while delayed enabling '{tweak.Name}'");
+                }
+            }
+        }
+
+        private static bool IsSafeToEnableStartupTweaks() {
+            try {
+                return Service.ClientState.IsLoggedIn
+                       && Service.ClientState.TerritoryType != 0
+                       && Service.Objects.LocalPlayer != null;
+            } catch {
+                return false;
+            }
+        }
 
         public void SetupLocalization() {
             this.PluginConfig.Language ??= Service.ClientState.ClientLanguage switch {

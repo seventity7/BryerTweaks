@@ -48,6 +48,39 @@ public class CurrencyPopup : Tweak
         "poeticas"
     ];
 
+    private static readonly string[] AcceptedLogKindNames =
+    [
+        "System",
+        "Notice",
+        "Loot",
+        "Currency"
+    ];
+
+    private static readonly string[] RejectedLogKindNames =
+    [
+        "Say",
+        "Shout",
+        "Yell",
+        "Tell",
+        "Party",
+        "Alliance",
+        "FreeCompany",
+        "Linkshell",
+        "CrossWorldLinkshell",
+        "NoviceNetwork",
+        "PvPTeam",
+        "Emote",
+        "Echo",
+        "Debug",
+        "Battle",
+        "Attack",
+        "Damage",
+        "Action",
+        "Healing",
+        "Periodic",
+        "Experience"
+    ];
+
     private static readonly Regex[] CurrencyPatterns =
     [
         new(@"^\s*(?:You\s+)?(?:obtain|obtained|receive|received|gain|gained|get|got|earn|earned|acquire|acquired)\s+(?<amount>[\d,.]+)\s+(?<currency>.+?)[.!]?\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase),
@@ -299,6 +332,7 @@ public class CurrencyPopup : Tweak
             var rawText = chatMessage.Message.TextValue;
             var text = NormalizeChatText(rawText);
             if (string.IsNullOrWhiteSpace(text)) return;
+            if (!IsCandidateGameSystemMessage(chatMessage, text)) return;
 
             if (!TryParseCurrencyMessage(text, out var currency, out var amount)) return;
             if (amount == 0) return;
@@ -327,6 +361,31 @@ public class CurrencyPopup : Tweak
             .Replace('\uE05D', ' ')
             .Replace('\uE05E', ' ')
             .Trim();
+    }
+
+    private static bool IsCandidateGameSystemMessage(IChatMessage chatMessage, string text)
+    {
+        if (chatMessage.IsHandled) return false;
+        if (IsDalamudOrPluginStyleMessage(text)) return false;
+
+        var logKindName = chatMessage.LogKind.ToString();
+        if (string.IsNullOrWhiteSpace(logKindName)) return false;
+        if (ContainsAnyFragment(logKindName, RejectedLogKindNames)) return false;
+
+        return ContainsAnyFragment(logKindName, AcceptedLogKindNames);
+    }
+
+    private static bool IsDalamudOrPluginStyleMessage(string text)
+    {
+        var trimmed = text.TrimStart();
+        return trimmed.StartsWith('>') ||
+               trimmed.Contains("flytext", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.Contains("popup", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsAnyFragment(string value, IEnumerable<string> fragments)
+    {
+        return fragments.Any(fragment => value.Contains(fragment, StringComparison.OrdinalIgnoreCase));
     }
 
     private bool TryParseCurrencyMessage(string text, out CurrencyKind currency, out ulong amount)

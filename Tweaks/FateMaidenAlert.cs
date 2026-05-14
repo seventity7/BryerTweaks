@@ -6,6 +6,7 @@ using Dalamud.Game.Chat;
 using Dalamud.Game.Gui.Toast;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
+using Dalamud.Interface.Utility;
 using BryerTweaks.TweakSystem;
 using BryerTweaks.Utility;
 using FFXIVClientStructs.FFXIV.Client.UI;
@@ -34,11 +35,13 @@ public unsafe class FateMaidenAlert : Tweak {
         public bool MessageAlert = true;
         public bool TrackOverlay = true;
         public int TrackerDistance = 15;
+        public float OverlayScale = 1.0f;
         public int SoundId = 8;
 
         public void Validate() {
             SoundId = Math.Clamp(SoundId, MinSoundEffectId, MaxSoundEffectId);
             TrackerDistance = Math.Clamp(TrackerDistance, MinTrackerDistance, MaxTrackerDistance);
+            OverlayScale = Math.Clamp(OverlayScale, 0.50f, 2.00f);
         }
     }
 
@@ -104,6 +107,7 @@ public unsafe class FateMaidenAlert : Tweak {
                 "Enable/Disable on-screen tracker overlay.");
 
             DrawTrackerDistanceSlider(ref hasChanged);
+            DrawOverlayScaleSlider(ref hasChanged);
 
             ModernConfigUi.HelpText("Distance less than or equal to the chosen value, the overlay disappears temporarily.");
             ModernConfigUi.EndSection();
@@ -118,8 +122,8 @@ public unsafe class FateMaidenAlert : Tweak {
         var selectedSound = Math.Clamp(Config.SoundId, MinSoundEffectId, MaxSoundEffectId);
         ImGui.AlignTextToFramePadding();
         ImGui.TextUnformatted("Sound");
-        ImGui.SameLine(160f);
-        ImGui.SetNextItemWidth(75f);
+        ImGui.SameLine(160f * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(75f * ImGuiHelpers.GlobalScale);
 
         if (ImGui.BeginCombo("##FateMaidenAlertSoundId", selectedSound.ToString())) {
             for (var soundId = MinSoundEffectId; soundId <= MaxSoundEffectId; soundId++) {
@@ -144,8 +148,8 @@ public unsafe class FateMaidenAlert : Tweak {
 
         ImGui.AlignTextToFramePadding();
         ImGui.TextUnformatted("Tracker distance");
-        ImGui.SameLine(160f);
-        ImGui.SetNextItemWidth(135f);
+        ImGui.SameLine(160f * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(135f * ImGuiHelpers.GlobalScale);
 
         if (ImGui.SliderInt("##FateMaidenAlertTrackerDistance", ref distance, MinTrackerDistance, MaxTrackerDistance, "%dm")) {
             Config.TrackerDistance = distance;
@@ -153,8 +157,22 @@ public unsafe class FateMaidenAlert : Tweak {
         }
     }
 
+    private void DrawOverlayScaleSlider(ref bool hasChanged) {
+        var overlayScale = Math.Clamp(Config.OverlayScale, 0.50f, 2.00f);
+
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Overlay scale");
+        ImGui.SameLine(160f * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(135f * ImGuiHelpers.GlobalScale);
+
+        if (ImGui.SliderFloat("##FateMaidenAlertOverlayScale", ref overlayScale, 0.50f, 2.00f, "%.2fx")) {
+            Config.OverlayScale = overlayScale;
+            hasChanged = true;
+        }
+    }
+
     private void DrawOverlay() {
-        maidenOverlayRenderer?.Draw(Config.TrackOverlay, Config.TrackerDistance);
+        maidenOverlayRenderer?.Draw(Config.TrackOverlay, Config.TrackerDistance, Config.OverlayScale);
     }
 
     private void TriggerTestAlert() => TriggerAlert(ignoreDuplicateGuard: true);

@@ -25,6 +25,39 @@ public class TradingsPopup : Tweak
 
     private static readonly Regex AmountRegex = new(@"(?<amount>[\d,.]+)\s*(?:gil|g\b)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    private static readonly string[] AcceptedLogKindNames =
+    [
+        "System",
+        "Notice",
+        "Loot",
+        "Currency"
+    ];
+
+    private static readonly string[] RejectedLogKindNames =
+    [
+        "Say",
+        "Shout",
+        "Yell",
+        "Tell",
+        "Party",
+        "Alliance",
+        "FreeCompany",
+        "Linkshell",
+        "CrossWorldLinkshell",
+        "NoviceNetwork",
+        "PvPTeam",
+        "Emote",
+        "Echo",
+        "Debug",
+        "Battle",
+        "Attack",
+        "Damage",
+        "Action",
+        "Healing",
+        "Periodic",
+        "Experience"
+    ];
+
     private static readonly Regex[] ReceivedPatterns =
     [
         new(@"^\s*(?:You\s+)?(?:receive|received|obtain|obtained|get|got)\s+(?<amount>[\d,.]+)\s*gil(?:\s+from\s+(?<name>.+?))?[.!]?\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase),
@@ -200,6 +233,7 @@ public class TradingsPopup : Tweak
             var rawText = chatMessage.Message.TextValue;
             var text = NormalizeChatText(rawText);
             if (string.IsNullOrWhiteSpace(text)) return;
+            if (!IsCandidateGameSystemMessage(chatMessage, text)) return;
 
             if (Config.DebugChatMessages && LooksTradeRelated(text))
             {
@@ -213,9 +247,16 @@ public class TradingsPopup : Tweak
 
             if (string.IsNullOrWhiteSpace(traderName))
             {
-                traderName = GetRecentTradePartner()
-                    ?? GetCurrentTargetPlayerName()
-                    ?? "Unknown Trader";
+                traderName = GetRecentTradePartner();
+                if (string.IsNullOrWhiteSpace(traderName))
+                {
+                    if (Config.DebugChatMessages)
+                    {
+                        SimpleLog.Debug($"[TradingsPopup] Ignored gil message without a recent trade partner. amount={amount}, text='{text}'");
+                    }
+
+                    return;
+                }
             }
 
             traderName = CleanTraderName(traderName);
@@ -265,15 +306,6 @@ public class TradingsPopup : Tweak
                cleanName.Equals("Unknown", StringComparison.OrdinalIgnoreCase);
     }
 
-    private string? GetCurrentTargetPlayerName()
-    {
-        var target = Service.Targets.Target;
-        if (target == null) return null;
-
-        var name = CleanTraderName(target.Name.ToString());
-        return string.IsNullOrWhiteSpace(name) ? null : name;
-    }
-
     private static string NormalizeChatText(string text)
     {
         return text
@@ -282,6 +314,31 @@ public class TradingsPopup : Tweak
             .Replace('\uE05D', ' ')
             .Replace('\uE05E', ' ')
             .Trim();
+    }
+
+    private static bool IsCandidateGameSystemMessage(IChatMessage chatMessage, string text)
+    {
+        if (chatMessage.IsHandled) return false;
+        if (IsDalamudOrPluginStyleMessage(text)) return false;
+
+        var logKindName = chatMessage.LogKind.ToString();
+        if (string.IsNullOrWhiteSpace(logKindName)) return false;
+        if (ContainsAnyFragment(logKindName, RejectedLogKindNames)) return false;
+
+        return ContainsAnyFragment(logKindName, AcceptedLogKindNames);
+    }
+
+    private static bool IsDalamudOrPluginStyleMessage(string text)
+    {
+        var trimmed = text.TrimStart();
+        return trimmed.StartsWith('>') ||
+               trimmed.Contains("flytext", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.Contains("popup", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsAnyFragment(string value, IEnumerable<string> fragments)
+    {
+        return fragments.Any(fragment => value.Contains(fragment, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool LooksTradeRelated(string text)

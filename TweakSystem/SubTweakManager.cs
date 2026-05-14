@@ -91,7 +91,9 @@ public abstract class SubTweakManager<T> : SubTweakManager where T : BaseTweak {
             if (PluginConfig.EnabledTweaks.Contains(GetTweakKey(subT))) {
                 try {
                     SimpleLog.Log($"Enable: {t.Name} @ {Name}");
-                    t.InternalEnable();
+                    if (!Plugin.QueueStartupTweakEnable(t, GetTweakKey(subT))) {
+                        t.InternalEnable();
+                    }
                 } catch (Exception ex) {
                     Plugin.Error(this, t, ex, true, $"Error in Enable for '{t.Name}' @ '{this.Name}'");
                 }
