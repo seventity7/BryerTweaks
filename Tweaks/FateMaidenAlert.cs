@@ -19,6 +19,9 @@ namespace BryerTweaks.Tweaks;
 [TweakCategory(TweakCategory.QoL, TweakCategory.UI)]
 [TweakAutoConfig]
 public unsafe class FateMaidenAlert : Tweak {
+    protected override bool NeedsStableWorldForStartupEnable => true;
+    protected override int StableWorldFramesBeforeStartupEnable => 300;
+
     private const uint MaidenSpawnLogMessageId = 2838;
     private const string AlertMessage = "[Maiden Alert] A maiden has just spawned in this fate right now!";
 
@@ -172,6 +175,8 @@ public unsafe class FateMaidenAlert : Tweak {
     }
 
     private void DrawOverlay() {
+        if (!WorldReadyGuard.IsReady()) return;
+
         maidenOverlayRenderer?.Draw(Config.TrackOverlay, Config.TrackerDistance, Config.OverlayScale);
     }
 

@@ -34,6 +34,11 @@ public abstract class BaseTweak {
     public virtual bool Ready { get; protected set; }
     public virtual bool Enabled { get; protected set; }
     protected virtual bool Unloading { get; private set; } = true;
+    protected virtual bool NeedsStableWorldForStartupEnable => false;
+    protected virtual int StableWorldFramesBeforeStartupEnable => 240;
+
+    internal bool CanEnableAfterStartupDelay() =>
+        !NeedsStableWorldForStartupEnable || WorldReadyGuard.IsReady(StableWorldFramesBeforeStartupEnable);
 
     private bool hasPreviewImage;
 
@@ -286,6 +291,7 @@ public abstract class BaseTweak {
             SimpleLog.Error(ex);
         }
     }
+
     internal bool TryExportCurrentConfig(out string? configKey, out string? json) {
         configKey = null;
         json = null;
@@ -331,7 +337,6 @@ public abstract class BaseTweak {
             return false;
         }
     }
-
 
     public bool DrawConfigUI(ref bool hasChanged) {
         var shouldForceOpenConfig = ForceOpenConfig;

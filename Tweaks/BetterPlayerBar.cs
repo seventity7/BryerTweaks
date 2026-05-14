@@ -25,6 +25,9 @@ namespace BryerTweaks.Tweaks.UiAdjustment;
 [TweakDescription("Replaces the native player target bar with a floating action panel.")]
 [TweakAuthor("Bryer")]
 public unsafe class BetterPlayerBar : UiAdjustments.SubTweak {
+    protected override bool NeedsStableWorldForStartupEnable => true;
+    protected override int StableWorldFramesBeforeStartupEnable => 300;
+
     private const string TargetInfoSplitAddon = "_TargetInfoMainTarget";
     private const string TargetInfoAddon = "_TargetInfo";
     private const string CommandName = "/bpb";
@@ -696,6 +699,8 @@ public unsafe class BetterPlayerBar : UiAdjustments.SubTweak {
     }
 
     private void Draw() {
+        if (!WorldReadyGuard.IsReady()) return;
+
         try {
             ClampConfig();
 

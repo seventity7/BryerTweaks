@@ -17,6 +17,9 @@ namespace BryerTweaks.Tweaks;
 [TweakCategory(TweakCategory.UI, TweakCategory.QoL)]
 [TweakAutoConfig]
 public unsafe class FlagDistanceOverlay : Tweak {
+    protected override bool NeedsStableWorldForStartupEnable => true;
+    protected override int StableWorldFramesBeforeStartupEnable => 300;
+
     private const uint UmbraDirectionArrowIconId = 60541;
 
     private static readonly Vector4 IconShadowColor = new(0.929f, 0.384f, 0.384f, 0.78f); // #ED6262
@@ -119,6 +122,7 @@ public unsafe class FlagDistanceOverlay : Tweak {
     }
 
     private void Draw() {
+        if (!WorldReadyGuard.IsReady()) return;
         if (!Config.ShowOverlay || Service.GameGui.GameUiHidden) return;
         if (!Config.ShowWhenMapOpen && IsMapOpen()) return;
 

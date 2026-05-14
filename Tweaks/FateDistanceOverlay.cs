@@ -19,6 +19,9 @@ namespace BryerTweaks.Tweaks;
 [TweakCategory(TweakCategory.UI, TweakCategory.QoL)]
 [TweakAutoConfig]
 public unsafe class FateDistanceOverlay : Tweak {
+    protected override bool NeedsStableWorldForStartupEnable => true;
+    protected override int StableWorldFramesBeforeStartupEnable => 300;
+
     private const uint UmbraDirectionArrowIconId = 60541;
 
     public class Configs : TweakConfig {
@@ -117,6 +120,7 @@ public unsafe class FateDistanceOverlay : Tweak {
     }
 
     private void Draw() {
+        if (!WorldReadyGuard.IsReady()) return;
         if (!Config.ShowOverlay || Service.GameGui.GameUiHidden) return;
 
         SanitizeConfig();

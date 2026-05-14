@@ -25,6 +25,9 @@ namespace BryerTweaks.Tweaks.UiAdjustment;
 [TweakDescription("Replaces the hostile target HP/name display with a stylized floating HP panel.")]
 [TweakAuthor("Bryer")]
 public unsafe class HPPanel : UiAdjustments.SubTweak {
+    protected override bool NeedsStableWorldForStartupEnable => true;
+    protected override int StableWorldFramesBeforeStartupEnable => 300;
+
     private const string TargetInfoSplitAddon = "_TargetInfoMainTarget";
     private const string TargetInfoAddon = "_TargetInfo";
     private const string TargetBuffDebuffAddon = "_TargetInfoBuffDeBuff";
@@ -555,6 +558,8 @@ public unsafe class HPPanel : UiAdjustments.SubTweak {
     }
 
     private void Draw() {
+        if (!WorldReadyGuard.IsReady()) return;
+
         try {
             ClampConfig();
 

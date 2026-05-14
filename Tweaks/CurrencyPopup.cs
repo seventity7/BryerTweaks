@@ -19,6 +19,9 @@ namespace BryerTweaks.Tweaks;
 [TweakAutoConfig]
 public class CurrencyPopup : Tweak
 {
+    protected override bool NeedsStableWorldForStartupEnable => true;
+    protected override int StableWorldFramesBeforeStartupEnable => 300;
+
     private const uint BicolorGemstoneIconId = 65071;
     private const uint PoeticsIconId = 65023;
     private const int MaxVisibleEntries = 8;
@@ -327,6 +330,8 @@ public class CurrencyPopup : Tweak
 
     private void OnChatMessage(IHandleableChatMessage chatMessage)
     {
+        if (!WorldReadyGuard.IsReady()) return;
+
         try
         {
             var rawText = chatMessage.Message.TextValue;
@@ -552,6 +557,7 @@ public class CurrencyPopup : Tweak
 
     private void Draw()
     {
+        if (!WorldReadyGuard.IsReady()) return;
         if (activeTexts.Count == 0) return;
 
         var now = Environment.TickCount64;

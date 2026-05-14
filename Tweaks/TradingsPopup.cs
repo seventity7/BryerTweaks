@@ -20,6 +20,9 @@ namespace BryerTweaks.Tweaks;
 [TweakAutoConfig]
 public class TradingsPopup : Tweak
 {
+    protected override bool NeedsStableWorldForStartupEnable => true;
+    protected override int StableWorldFramesBeforeStartupEnable => 300;
+
     private const uint FallbackGilIconId = 65001;
     private const int MaxVisibleEntries = 8;
 
@@ -228,6 +231,8 @@ public class TradingsPopup : Tweak
 
     private void OnChatMessage(IHandleableChatMessage chatMessage)
     {
+        if (!WorldReadyGuard.IsReady()) return;
+
         try
         {
             var rawText = chatMessage.Message.TextValue;
@@ -551,6 +556,7 @@ public class TradingsPopup : Tweak
 
     private void Draw()
     {
+        if (!WorldReadyGuard.IsReady()) return;
         if (activeTexts.Count == 0) return;
 
         var now = Environment.TickCount64;

@@ -299,6 +299,7 @@ namespace BryerTweaks {
         
 
         private void FrameworkOnUpdate(IFramework framework) {
+            WorldReadyGuard.Update();
             Common.InvokeFrameworkUpdate();
             ProcessStartupTweakEnableQueue();
         }
@@ -324,17 +325,20 @@ namespace BryerTweaks {
 
             if (++startupTweakEnableReadyFrames < 120) return;
 
-            var queuedTweaks = startupTweakEnableQueue.ToArray();
-            startupTweakEnableQueue.Clear();
+            foreach (var (tweak, enabledKey) in startupTweakEnableQueue.ToArray()) {
+                if (tweak.IsDisposed || tweak.Enabled || !PluginConfig.EnabledTweaks.Contains(enabledKey)) {
+                    startupTweakEnableQueue.Remove(tweak);
+                    continue;
+                }
 
-            foreach (var (tweak, enabledKey) in queuedTweaks) {
-                if (tweak.IsDisposed || tweak.Enabled) continue;
-                if (!PluginConfig.EnabledTweaks.Contains(enabledKey)) continue;
+                if (!tweak.CanEnableAfterStartupDelay()) continue;
 
                 try {
                     SimpleLog.Debug($"Delayed startup enable: {tweak.Name}");
                     tweak.InternalEnable();
+                    startupTweakEnableQueue.Remove(tweak);
                 } catch (Exception ex) {
+                    startupTweakEnableQueue.Remove(tweak);
                     Error(tweak, ex, true, $"Error while delayed enabling '{tweak.Name}'");
                 }
             }
@@ -529,6 +533,11 @@ namespace BryerTweaks {
 
         public void SaveAllConfig() {
             PluginConfig.Save();
+            foreach (var tp in TweakProviders.Where(tp => !tp.IsDisposed)) {
+                foreach (var t in tp.Tweaks) {
+                    t.RequestSaveConfig();
+                }
+            }
         }
 
         public void RemoveCommands() {

@@ -17,6 +17,9 @@ namespace BryerTweaks.Tweaks.UiAdjustment;
 [TweakName("Target HP")]
 [TweakDescription("Displays the exact (or optionally rounded) value of target's hitpoints.")]
 public unsafe class TargetHP : UiAdjustments.SubTweak {
+    protected override bool NeedsStableWorldForStartupEnable => true;
+    protected override int StableWorldFramesBeforeStartupEnable => 300;
+
     private readonly record struct HpBarNodeColorState(
         byte MultiplyRed,
         byte MultiplyGreen,
@@ -480,6 +483,8 @@ public unsafe class TargetHP : UiAdjustments.SubTweak {
 
     [FrameworkUpdate]
     private void FrameworkUpdate() {
+        if (!WorldReadyGuard.IsReady()) return;
+
         try {
             if (Config.NameplateOverlay || Config.CustomHpBar) {
                 Service.NamePlateGui.RequestRedraw();
