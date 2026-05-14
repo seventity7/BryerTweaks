@@ -1,0 +1,42 @@
+﻿using System;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using FFXIVClientStructs.FFXIV.Client.Game.Object;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using FFXIVClientStructs.FFXIV.Client.UI.Misc;
+using BryerTweaks.Tweaks.AbstractTweaks;
+using BryerTweaks.TweakSystem;
+
+namespace BryerTweaks.Tweaks;
+
+[TweakName("Open Adventurer Plate Command")]
+[TweakDescription("Adds a command to open adventurer plates.")]
+[TweakVersion(2)]
+public unsafe class CharaCardCommand : CommandTweak {
+    protected override string Command => "playerplate";
+    protected override string HelpMessage => "Opens the character card for the selected character.";
+
+    protected override void OnCommand(string arguments) {
+        if (string.IsNullOrWhiteSpace(arguments)) {
+            Service.Chat.PrintError($"/{CustomOrDefaultCommand} <t>");
+            return;
+        }
+
+        
+        var resolve = PronounModule.Instance()->ResolvePlaceholder(arguments, 0, 0);
+        if (resolve == null) {
+            foreach (var actor in Service.Objects) {
+                if (actor is not IPlayerCharacter) continue;
+                if (actor.Name.TextValue.Equals(arguments, StringComparison.InvariantCultureIgnoreCase)) {
+                    resolve = (GameObject*)actor.Address;
+                    break;
+                }
+            }
+        }
+
+        if (resolve != null && resolve->ObjectKind == ObjectKind.Pc && resolve->SubKind == 4) {
+            AgentCharaCard.Instance()->OpenCharaCard(resolve);
+        } else {
+            if (ShowCommandErrors) Service.Chat.PrintError($"{arguments} is not a player.");
+        }
+    }
+}

@@ -1,0 +1,1042 @@
+using System.Numerics;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
+using Dalamud.Interface;
+using Dalamud.Interface.Colors;
+using Dalamud.Interface.Components;
+using Dalamud.Interface.Utility.Raii;
+using Dalamud.Plugin;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Text.SeStringHandling;
+using Dalamud.Game.Text.SeStringHandling.Payloads;
+using InteropGenerator.Runtime;
+using Newtonsoft.Json;
+using BryerTweaks.Events;
+using BryerTweaks.Tweaks.AbstractTweaks;
+using BryerTweaks.Utility;
+
+namespace BryerTweaks.TweakSystem;
+
+public abstract class BaseTweak {
+    protected BaseTweak() { }
+    internal BaseTweak(string name) => tweakNameAttribute = new TweakNameAttribute(name);
+
+    protected BryerTweaks Plugin;
+    protected IDalamudPluginInterface PluginInterface;
+    protected BryerTweaksConfig PluginConfig;
+
+    public virtual bool Ready { get; protected set; }
+    public virtual bool Enabled { get; protected set; }
+    protected virtual bool Unloading { get; private set; } = true;
+
+    private bool hasPreviewImage;
+
+    public bool IsDisposed { get; private set; }
+
+    public virtual string Key => TweakKeyAttribute?.Key ?? GetType().Name;
+
+    public string Name => TweakNameAttribute?.Name ?? GetType().Name;
+
+    public uint Version => TweakVersionAttribute?.Version ?? 1;
+
+    public string LocalizedName => LocString("Name", Name, "Tweak Name");
+
+
+    private readonly Regex descriptionTemplate = new(@"\$\[(?<field>\w+)\]", RegexOptions.Compiled);
+    
+    public string? Description {
+        get {
+            if (field != null) return field;
+            var description = TweakDescriptionAttribute?.Description;
+            if (description == null) return null;
+            
+            var parsedTemplate = descriptionTemplate.Replace(description, match => {
+                if (match.Groups["field"].Success) {
+                    try {
+                        var m = GetType().GetMember(match.Groups["field"].Value, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (m.Length == 0) return $"InvalidTemplate.NoMatches({match.Groups["field"].Value})";
+                        if (m.Length > 1) return $"InvalidTemplate.MultipleMatches({match.Groups["field"].Value})";
+                        if (m[0] is MethodInfo) return $"InvalidTemplate.MethodMatch({match.Groups["field"].Value})";
+                        if (m[0] is PropertyInfo pi) return pi.GetValue(this)?.ToString() ?? string.Empty;
+                        if (m[0] is FieldInfo fi) return fi.GetValue(this)?.ToString() ?? string.Empty;
+                    } catch (Exception ex) {
+                        return $"InvalidTemplate.Error({match.Groups["field"].Value}): {ex.Message}";
+                    }
+                    
+                }
+                return string.Empty;
+            });
+
+            return field = parsedTemplate;
+        }
+    }
+    
+    protected string? Author => TweakAuthorAttribute?.Author;
+    protected string? DisplayAuthor {
+        get {
+            if (string.IsNullOrWhiteSpace(Author)) return null;
+
+            var author = Author.Trim();
+            return author.Equals("Bryer", StringComparison.OrdinalIgnoreCase)
+                ? author
+                : $"{author} @BryerTweaks";
+        }
+    }
+    public virtual bool Experimental => false;
+    public IEnumerable<string> Tags => TweakTagsAttribute?.Tags ?? [];
+    internal bool ForceOpenConfig { private get; set; }
+
+    public TweakProvider TweakProvider { get; private set; }
+    public SubTweakManager? TweakManager { get; private set; }
+
+    public virtual bool CanLoad => true;
+
+    public bool UseAutoConfig => TweakAutoConfigAttribute is not NoAutoConfig;
+
+    protected CultureInfo Culture => Plugin.Culture;
+
+    public void InterfaceSetup(BryerTweaks plugin, IDalamudPluginInterface pluginInterface, BryerTweaksConfig config, TweakProvider tweakProvider, SubTweakManager? tweakManager = null) {
+        this.PluginInterface = pluginInterface;
+        this.PluginConfig = config;
+        this.Plugin = plugin;
+        this.TweakProvider = tweakProvider;
+        this.TweakManager = tweakManager;
+    }
+
+    public string LocString(string key, string fallback, string? description = null) {
+        description ??= $"{Name} - {fallback}";
+        return Loc.Localize($"{this.Key} / {key}", fallback, $"[{this.GetType().Name}] {description}");
+    }
+
+    public string LocString(string keyAndFallback) {
+        return LocString(keyAndFallback, keyAndFallback);
+    }
+
+    private void DrawCommon() {
+        if (hasPreviewImage) {
+            ImGui.SameLine();
+            ImGuiExt.IconButton($"##previewButton", FontAwesomeIcon.Image);
+            if (ImGui.IsItemHovered()) {
+                ImGui.BeginTooltip();
+                try {
+                    var image = Service.TextureProvider.GetFromFile(Path.Join(PluginInterface.AssemblyLocation.DirectoryName, "TweakPreviews", $"{Key}.png"));
+                    var previewImage = image.GetWrapOrDefault();
+                    if (previewImage != null) {
+                        ImGui.Image(previewImage.Handle, new Vector2(previewImage.Width, previewImage.Height));
+                    } else {
+                        ImGui.Text("Image Loading...");
+                    }
+                } catch {
+                    hasPreviewImage = false;
+                }
+
+                ImGui.EndTooltip();
+            }
+        }
+
+        if (this.Experimental) {
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1, 0, 0, 1), "  Experimental");
+        }
+
+        DrawAuthorLine();
+
+        if (PluginConfig.ShowTweakIDs) {
+            ImGui.SameLine();
+            var minPos = ImGui.GetCursorPosX();
+            var text = $"[{this.Key}]";
+            var size = ImGui.CalcTextSize(text);
+            ImGui.SetCursorPosX(Math.Max(minPos, ImGuiExt.GetWindowContentRegionSize().X - size.X));
+            ImGui.TextDisabled(text);
+            if (ImGui.IsItemHovered()) {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+            }
+
+            if (ImGui.IsItemClicked()) {
+                ImGui.SetClipboardText(Key);
+            }
+        }
+
+        if (TweakManager is { Enabled: false }) {
+            ImGui.TextColored(ImGuiColors.DalamudRed, $"\tThis tweak is part of {TweakManager.Name}. Enable it in General Options.");
+        }
+    }
+
+    private void DrawAuthorLine() {
+        if (string.IsNullOrWhiteSpace(Author)) return;
+
+        var author = Author.Trim();
+        var showSource = !author.Equals("Bryer", StringComparison.OrdinalIgnoreCase);
+        var sourceColor = new Vector4(0.25f, 0.46f, 0.56f, 0.55f);
+
+        ImGui.SameLine();
+        ImGui.SetWindowFontScale(0.86f);
+        ImGui.TextDisabled($"  by {author}");
+
+        if (showSource) {
+            ImGui.SameLine(0f, 0f);
+            ImGui.TextColored(sourceColor, " @BryerTweaks");
+        }
+
+        ImGui.SetWindowFontScale(1f);
+    }
+
+    protected T? LoadConfig<T>() where T : TweakConfig => LoadConfig<T>(this.Key);
+
+    protected T? LoadConfig<T>(string key) where T : TweakConfig {
+        try {
+            var configDirectory = PluginInterface.GetPluginConfigDirectory();
+            var configFile = Path.Combine(configDirectory, key + ".json");
+            if (!File.Exists(configFile)) return default;
+            var jsonString = File.ReadAllText(configFile);
+            return JsonConvert.DeserializeObject<T>(jsonString);
+        } catch (Exception ex) {
+            SimpleLog.Error($"Failed to load config for tweak: {Name}");
+            SimpleLog.Error(ex);
+            return default;
+        }
+    }
+
+    private object? LoadConfig(Type T, string key) {
+        if (!T.IsSubclassOf(typeof(TweakConfig))) throw new Exception($"{T} is not a TweakConfig class.");
+#if TEST
+        return null;
+#else
+        try {
+            var configDirectory = PluginInterface.GetPluginConfigDirectory();
+            var configFile = Path.Combine(configDirectory, key + ".json");
+            if (!File.Exists(configFile)) return null;
+            var jsonString = File.ReadAllText(configFile);
+            return JsonConvert.DeserializeObject(jsonString, T);
+        } catch (Exception ex) {
+            SimpleLog.Error($"Failed to load config for tweak: {Name}");
+            SimpleLog.Error(ex);
+            return null;
+        }
+#endif
+        
+        
+    }
+
+    protected void SaveConfig<T>(T config) where T : TweakConfig {
+        try {
+#if DEBUG
+            SimpleLog.Verbose($"Save Config: {Name}");
+#endif
+            var configDirectory = PluginInterface.GetPluginConfigDirectory();
+            var configFile = Path.Combine(configDirectory, this.Key + ".json");
+            var jsonString = JsonConvert.SerializeObject(config, Formatting.Indented);
+#if DEBUG
+            foreach (var l in jsonString.Split('\n')) {
+                SimpleLog.Verbose($"    [{Name} Config] {l}");
+            }
+#endif
+            
+            #if !TEST
+            File.WriteAllText(configFile, jsonString);
+            #endif  
+        } catch (Exception ex) {
+            SimpleLog.Error($"Failed to write config for tweak: {this.Name}");
+            SimpleLog.Error(ex);
+        }
+    }
+
+    private void SaveConfig(object config) {
+        try {
+            if (!config.GetType().IsSubclassOf(typeof(TweakConfig))) {
+                SimpleLog.Error($"Failed to save Config: {config.GetType().Name} is not a subclass of TweakConfig.");
+                return;
+            }
+#if DEBUG
+            SimpleLog.Verbose($"Save Config: {Name}");
+#endif
+            var configDirectory = PluginInterface.GetPluginConfigDirectory();
+            var configFile = Path.Combine(configDirectory, this.Key + ".json");
+            var jsonString = JsonConvert.SerializeObject(config, Formatting.Indented);
+#if DEBUG
+            foreach (var l in jsonString.Split('\n')) {
+                SimpleLog.Verbose($"    [{Name} Config] {l}");
+            }
+#endif
+#if !TEST
+            File.WriteAllText(configFile, jsonString);
+#endif
+        } catch (Exception ex) {
+            SimpleLog.Error($"Failed to write config for tweak: {this.Name}");
+            SimpleLog.Error(ex);
+        }
+    }
+
+    public virtual void RequestSaveConfig() {
+        try {
+#if DEBUG
+            SimpleLog.Log($"Request Save Config: {Name}");
+#endif
+            var configObj = this.GetType().GetProperties().FirstOrDefault(p => p.PropertyType.IsSubclassOf(typeof(TweakConfig)))?.GetValue(this);
+            if (configObj == null) return;
+            SaveConfig((TweakConfig)configObj);
+        } catch (Exception ex) {
+            SimpleLog.Error($"Failed to save config for tweak: {this.Name}");
+            SimpleLog.Error(ex);
+        }
+    }
+    internal bool TryExportCurrentConfig(out string? configKey, out string? json) {
+        configKey = null;
+        json = null;
+
+        try {
+            var configProperty = GetType()
+                .GetProperties(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .FirstOrDefault(p => p.PropertyType.IsSubclassOf(typeof(TweakConfig)));
+
+            if (configProperty == null) return false;
+
+            var configObj = configProperty.GetValue(this);
+            if (configObj == null) return false;
+
+            configKey = TweakAutoConfigAttribute.ConfigKey ?? Key;
+            json = JsonConvert.SerializeObject(configObj, Formatting.Indented);
+            return !string.IsNullOrWhiteSpace(json);
+        } catch (Exception ex) {
+            SimpleLog.Error($"Failed to export current config for tweak: {Name}");
+            SimpleLog.Error(ex);
+            return false;
+        }
+    }
+
+    internal bool TryImportCurrentConfig(string json) {
+        try {
+            if (string.IsNullOrWhiteSpace(json)) return false;
+
+            var configProperty = GetType()
+                .GetProperties(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .FirstOrDefault(p => p.PropertyType.IsSubclassOf(typeof(TweakConfig)));
+
+            if (configProperty == null) return false;
+
+            var configObj = JsonConvert.DeserializeObject(json, configProperty.PropertyType);
+            if (configObj == null) return false;
+
+            configProperty.SetValue(this, configObj);
+            return true;
+        } catch (Exception ex) {
+            SimpleLog.Error($"Failed to import current config for tweak: {Name}");
+            SimpleLog.Error(ex);
+            return false;
+        }
+    }
+
+
+    public bool DrawConfigUI(ref bool hasChanged) {
+        var shouldForceOpenConfig = ForceOpenConfig;
+        #if DEBUG
+        if (ImGui.GetIO().KeyShift && ImGui.GetIO().KeyAlt && ImGui.GetIO().KeyCtrl) {
+            shouldForceOpenConfig = true;
+        }
+        #endif
+        ForceOpenConfig = false;
+        var configTreeOpen = false;
+        if ((this is CommandTweak || UseAutoConfig || DrawConfigTree != null) && (Enabled || this is CommandTweak)) {
+            var x = ImGui.GetCursorPosX();
+            if (shouldForceOpenConfig) ImGui.SetNextItemOpen(true);
+            if (ImGui.TreeNode($"{LocalizedName}##treeConfig_{GetType().Name}")) {
+                configTreeOpen = true;
+                DrawCommon();
+                ImGui.SetCursorPosX(x);
+                ImGui.BeginGroup();
+                if (Enabled && UseAutoConfig) DrawAutoConfig(ref hasChanged);
+                if (Enabled) DrawConfigTree?.Invoke(ref hasChanged);
+                if (this is CommandTweak ct) {
+                    if (Enabled && (UseAutoConfig || DrawConfigTree != null)) ImGui.Text("Customize Commands:");
+                    using var _ = ImRaii.PushIndent(condition: Enabled && (UseAutoConfig || DrawConfigTree != null));
+                    ct.DrawCommandEditor(false);
+                }
+
+                ImGui.EndGroup();
+                ImGui.TreePop();
+            } else {
+                DrawCommon();
+            }
+        } else {
+            ImGui.PushStyleColor(ImGuiCol.HeaderHovered, 0x0);
+            ImGui.PushStyleColor(ImGuiCol.HeaderActive, 0x0);
+            ImGui.TreeNodeEx(LocalizedName, ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen);
+            ImGui.PopStyleColor();
+            ImGui.PopStyleColor();
+            DrawCommon();
+        }
+
+        if (hasChanged && Enabled) {
+            ConfigChanged();
+            if (TweakAutoConfigAttribute is not NoAutoConfig && TweakAutoConfigAttribute.AutoSaveLoad && TweakAutoConfigAttribute.SaveOnChange) {
+                AutoSaveConfig();
+            }
+        }
+        return configTreeOpen;
+    }
+
+    protected virtual void ConfigChanged() { }
+
+    public virtual void LanguageChanged() { }
+
+    private void DrawAutoConfig(ref bool hasChanged) {
+        try {
+            var configProperty = this.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).FirstOrDefault(p => p.PropertyType.IsSubclassOf(typeof(TweakConfig)));
+            if (configProperty == null) {
+                ImGui.Text("No Config Property Found");
+                return;
+            }
+
+            var configObj = configProperty.GetValue(this);
+
+            if (configObj == null) {
+                configObj = Activator.CreateInstance(configProperty.PropertyType);
+                if (configObj == null) return;
+                configProperty.SetValue(this, configObj);
+            }
+
+            var fields = configObj.GetType().GetFields().Where(f => f.GetCustomAttribute(typeof(TweakConfigOptionAttribute)) != null).Select(f => (f, (TweakConfigOptionAttribute?)f.GetCustomAttribute(typeof(TweakConfigOptionAttribute)))).OrderBy(a => a.Item2?.Priority).ThenBy(a => a.Item2?.Name);
+
+            var configOptionIndex = 0;
+            foreach (var (f, attr) in fields) {
+                if (attr == null) continue;
+                if (attr.ConditionalDisplay) {
+                    var conditionalMethod = configObj.GetType().GetMethod($"ShouldShow{f.Name}", BindingFlags.Public | BindingFlags.Instance);
+                    if (conditionalMethod != null) {
+                        var shouldShow = (bool)(conditionalMethod.Invoke(configObj, Array.Empty<object?>()) ?? true);
+                        if (!shouldShow) continue;
+                    }
+                }
+
+                if (attr.SameLine) ImGui.SameLine();
+
+                var localizedName = LocString(attr.LocalizeKey, attr.Name, $"[Config] {attr.Name}");
+                if (attr.Editor != null) {
+                    var v = f.GetValue(configObj);
+                    var arr = new[] { $"{localizedName}##{f.Name}_{this.GetType().Name}_{configOptionIndex++}", v };
+                    var o = (bool?)attr.Editor.Invoke(null, arr) ?? false;
+                    if (o) {
+                        hasChanged = true;
+                        f.SetValue(configObj, arr[1]);
+                    }
+                } else if (f.FieldType == typeof(bool)) {
+                    var v = (bool?)f.GetValue(configObj) ?? false;
+                    if (ImGui.Checkbox($"{localizedName}##{f.Name}_{this.GetType().Name}_{configOptionIndex++}", ref v)) {
+                        hasChanged = true;
+                        f.SetValue(configObj, v);
+                    }
+                } else if (f.FieldType == typeof(int)) {
+                    var v = (int?)f.GetValue(configObj) ?? 0;
+                    ImGui.SetNextItemWidth(attr.EditorSize == -1 ? -1 : attr.EditorSize * ImGui.GetIO().FontGlobalScale);
+                    var e = attr.IntType switch {
+                        TweakConfigOptionAttribute.IntEditType.Slider => ImGui.SliderInt($"{localizedName}##{f.Name}_{this.GetType().Name}_{configOptionIndex++}", ref v, attr.IntMin, attr.IntMax),
+                        TweakConfigOptionAttribute.IntEditType.Drag => ImGui.DragInt($"{localizedName}##{f.Name}_{this.GetType().Name}_{configOptionIndex++}", ref v, 1f, attr.IntMin, attr.IntMax),
+                        _ => false
+                    };
+
+                    if (attr.EnforcedLimit && v < attr.IntMin) {
+                        v = attr.IntMin;
+                        e = true;
+                    }
+
+                    if (attr.EnforcedLimit && v > attr.IntMax) {
+                        v = attr.IntMax;
+                        e = true;
+                    }
+
+                    if (e) {
+                        f.SetValue(configObj, v);
+                        hasChanged = true;
+                    }
+                } else if (f.FieldType.IsEnum && f.GetValue(configObj) is Enum v) {
+                    if (attr.EditorSize != int.MinValue) ImGui.SetNextItemWidth(attr.EditorSize == -1 ? -1 : attr.EditorSize * ImGui.GetIO().FontGlobalScale);
+
+                    if (ImGui.BeginCombo($"{localizedName}##{f.Name}_{this.GetType().Namespace}_{configOptionIndex++}", $"{v?.GetDescription() ?? "Unknown"}")) {
+                        foreach (var eV in f.FieldType.GetEnumValues()) {
+                            if (eV is not Enum enumValue) {
+                                ImGui.Selectable($"???{eV}");
+                                continue;
+                            }
+
+                            if (ImGui.Selectable($"{enumValue.GetDescription()}", v != null && v.Equals(enumValue))) {
+                                f.SetValue(configObj, enumValue);
+                            }
+
+                            if (ImGui.IsItemHovered() && enumValue.TryGetTooltip(out var tooltip)) {
+                                ImGui.SetTooltip(tooltip);
+                            }
+                        }
+
+                        ImGui.EndCombo();
+                    }
+                } else {
+                    ImGui.Text($"Invalid Auto Field Type: {f.Name}");
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(attr.HelpText)) {
+                    ImGui.SameLine();
+                    ImGuiComponents.HelpMarker(attr.HelpText);
+                }
+            }
+        } catch (Exception ex) {
+            ImGui.Text($"Error with AutoConfig: {ex.Message}");
+            ImGui.TextWrapped($"{ex.StackTrace}");
+        }
+    }
+
+    public virtual void HandleBasicCommand(string[] args) {
+        SimpleLog.Debug($"[{Key}] Command Handler: {string.Join(" , ", args)}");
+        if (UseAutoConfig) {
+            if (!Enabled) {
+                Service.Chat.PrintError($"'{Name}' is not enabled.");
+                return;
+            }
+
+            var configObj = this.GetType().GetProperties().FirstOrDefault(p => p.PropertyType.IsSubclassOf(typeof(TweakConfig)))?.GetValue(this);
+            if (configObj != null) {
+                var fields = configObj.GetType().GetFields().Select(f => (f, (TweakConfigOptionAttribute?)f.GetCustomAttribute(typeof(TweakConfigOptionAttribute)))).OrderBy(a => a.Item2?.Priority).ThenBy(a => a.Item2?.Name);
+
+                if (args.Length > 1) {
+                    var field = fields.FirstOrDefault(f => f.f.Name == args[0]);
+                    if (field != default) {
+                        SimpleLog.Debug($"Set Value of {field.f.Name}");
+
+                        if (field.f.FieldType == typeof(bool)) {
+                            switch (args[1]) {
+                                case "1":
+                                case "enable":
+                                case "e":
+                                case "on": {
+                                    field.f.SetValue(configObj, true);
+                                    break;
+                                }
+                                case "o":
+                                case "disable":
+                                case "d":
+                                case "off": {
+                                    field.f.SetValue(configObj, false);
+                                    break;
+                                }
+                                case "t":
+                                case "toggle":
+                                {
+                                    var v = (bool?)field.f.GetValue(configObj) ?? false;
+                                    field.f.SetValue(configObj, !v);
+                                    break;
+                                }
+                                default: {
+                                    Service.Chat.PrintError($"'{args[1]}' is not a valid value for a boolean.");
+                                    return;
+                                }
+                            }
+
+                            RequestSaveConfig();
+                        } else if (field.f.FieldType == typeof(int)) {
+                            var isValidInt = int.TryParse(args[1], out var val);
+                            if (isValidInt && val >= field.Item2?.IntMin && val <= field.Item2?.IntMax) {
+                                field.f.SetValue(configObj, val);
+                                RequestSaveConfig();
+                            } else {
+                                Service.Chat.PrintError($"'{args[1]}' is not a valid integer between {field.Item2?.IntMin} and {field.Item2?.IntMax}.");
+                            }
+                        }
+
+                        return;
+                    }
+                }
+
+                // Print all options
+                if (args.Length == 0) Service.Chat.PrintError($"'{Name}' Command Config:");
+                foreach (var aField in fields) {
+                    if (args.Length > 0) {
+                        if (args[0] != aField.f.Name) continue;
+                    }
+
+                    var valuesString = string.Empty;
+                    if (aField.f.FieldType == typeof(bool)) {
+                        valuesString = $"on|off";
+                    } else if (aField.f.FieldType == typeof(int)) {
+                        valuesString = $"{aField.Item2?.IntMin} - {aField.Item2?.IntMax}";
+                    }
+
+                    if (!string.IsNullOrEmpty(valuesString)) {
+                        var line = $"/tweaks {Key} {aField.f.Name} [{valuesString}]";
+                        Service.Chat.PrintError($"   - {line}");
+                    }
+                }
+
+                return;
+            } else {
+                SimpleLog.Debug($"{Key} has no Config Object");
+            }
+        }
+
+        Service.Chat.PrintError($"'{Name}' does not support command usage.");
+    }
+
+    protected delegate void DrawConfigDelegate(ref bool hasChanged);
+
+    private DrawConfigDelegate DrawConfigTree { get; set; }
+
+    private void AttemptDrawConfigSetup() {
+        if (DrawConfigTree != null) return;
+
+        var method = GetType().GetMethod("DrawConfig", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+        if (method == null) return;
+
+        if (method.ReturnType != typeof(void)) {
+            Plugin.Error(this, new Exception("Failed to set DrawConfig function. Return type not void."), true);
+            return;
+        }
+
+        var parameters = method.GetParameters();
+
+        if (parameters.Length == 0) {
+            DrawConfigTree = (ref bool changed) => { method.Invoke(this, null); };
+            return;
+        }
+
+        if (parameters.Length == 1) {
+            var param = parameters[0];
+
+            if (param.ParameterType.IsByRef) {
+                var refType = param.ParameterType.GetElementType();
+
+                if (refType == typeof(bool)) {
+                    DrawConfigTree = (ref bool changed) => {
+                        var o = new object[] { changed };
+                        method.Invoke(this, o);
+                        changed = (bool)o[0];
+                    };
+                    return;
+                }
+            }
+        }
+
+        Plugin.Error(this, new Exception("Failed to set DrawConfig function. Invalid parameters."), true);
+    }
+
+    internal void SetupInternal() {
+        Setup();
+        hasPreviewImage = File.Exists(Path.Join(PluginInterface.AssemblyLocation.DirectoryName, "TweakPreviews", $"{Key}.png"));
+
+        AttemptDrawConfigSetup();
+        Ready = true;
+    }
+    
+    internal void AddChangelogs() {
+        foreach (var c in GetType().GetCustomAttributes<ChangelogAttribute>()) {
+            if (c is TweakReleaseVersionAttribute) {
+                Changelog.AddNewTweak(this, c.Version);
+            }
+
+            foreach (var change in c.Changes) {
+                var entry = Changelog.Add(this, c.Version, change);
+                if (!string.IsNullOrWhiteSpace(c.Author))
+                    entry.Author(c.Author);
+            }
+        }
+    }
+    
+    protected virtual void Setup() { }
+
+    private bool signatureHelperInitialized;
+
+    private void AutoLoadConfig() {
+        SimpleLog.Verbose($"[{Key}] AutoLoading Config");
+        var configProperty = GetType().GetProperties(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).FirstOrDefault(p => p.PropertyType.IsSubclassOf(typeof(TweakConfig)));
+        if (configProperty == null) {
+            SimpleLog.Error("Failed to AutoLoad config. No TweakConfig property found.");
+            return;
+        }
+
+        var config = LoadConfig(configProperty.PropertyType, TweakAutoConfigAttribute.ConfigKey ?? Key);
+        if (config == null) {
+            config = Activator.CreateInstance(configProperty.PropertyType);
+            configProperty.SetValue(this, config);
+        } else {
+            configProperty.SetValue(this, config);
+        }
+    }
+
+    private void AutoSaveConfig() {
+        SimpleLog.Verbose($"[{Key}] AutoSaving Config");
+        var configProperty = GetType().GetProperties(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).FirstOrDefault(p => p.PropertyType.IsSubclassOf(typeof(TweakConfig)));
+        if (configProperty == null) {
+            SimpleLog.Error("Failed to AutoSave config. No TweakConfig property found.");
+            return;
+        }
+
+        var config = configProperty.GetValue(this);
+        if (config == null) return;
+        SaveConfig(config);
+    }
+
+    private unsafe nint GetVirtualFunctionAddressFromAttribute(TweakHookAttribute attribute) {
+        var staticVirtualTableProperty = attribute.AddressType.GetProperty("StaticVirtualTablePointer", BindingFlags.Static | BindingFlags.Public);
+        if (staticVirtualTableProperty == null || !staticVirtualTableProperty.CanRead || !staticVirtualTableProperty.PropertyType.IsPointer || !staticVirtualTableProperty.PropertyType.HasElementType) throw new Exception($"Failed to find {attribute.AddressType}.StaticVirtualTablePointer [1]");
+        var virtualTableType = staticVirtualTableProperty.PropertyType.GetElementType();
+        if (virtualTableType == null) throw new Exception($"Failed to find {attribute.AddressType}.StaticVirtualTablePointer [2]");
+        var boxedStaticVirtualTableAddress = staticVirtualTableProperty.GetValue(null);
+        if (boxedStaticVirtualTableAddress == null) throw new Exception($"Failed to find {attribute.AddressType}.StaticVirtualTablePointer [3]");
+        var virtualFunctionField = virtualTableType.GetField(attribute.AddressName, BindingFlags.Public | BindingFlags.Instance);
+        if (virtualFunctionField == null) throw new Exception($"Failed to find {attribute.AddressType}.{attribute.AddressName} virtual function [4]");
+        var offsetAttribute = virtualFunctionField.GetCustomAttribute<FieldOffsetAttribute>();
+        if (offsetAttribute == null) throw new Exception($"Failed to find {attribute.AddressType}.{attribute.AddressName} virtual function [5]");
+        if (offsetAttribute.Value < 0) throw new Exception($"Invalid virtual table offset for {attribute.AddressType}.{attribute.AddressName} @ {offsetAttribute.Value} [6]");
+        var staticVirtualTableAddress = (void**) Pointer.Unbox(boxedStaticVirtualTableAddress);
+        staticVirtualTableAddress = (void**)((ulong)staticVirtualTableAddress + (uint)offsetAttribute.Value);
+        return (nint) staticVirtualTableAddress[0];
+    }
+    
+    internal void InternalEnable() {
+        Unloading = false;
+        if (!signatureHelperInitialized) {
+            SignatureHelper.Initialise(this);
+            signatureHelperInitialized = true;
+        }
+
+        // Auto Load Config
+        if (UseAutoConfig && TweakAutoConfigAttribute is not NoAutoConfig && TweakAutoConfigAttribute.AutoSaveLoad) {
+            AutoLoadConfig();
+        }
+
+        Enable();
+        EventController.RegisterEvents(this);
+
+        foreach (var (field, attribute) in this.GetFieldsWithAttribute<TweakHookAttribute>()) {
+            if (attribute == null) continue;
+            if (attribute.AddressType != null && field.GetValue(this) is null) {
+                SimpleLog.Verbose($"Setup Tweak Hook: [{Name}] {field.Name} for {attribute.AddressType.Name}.{attribute.AddressName}");
+
+                if (!(field.FieldType.IsGenericType && field.FieldType.GetGenericTypeDefinition() == typeof(HookWrapper<>))) {
+#if TEST
+                    throw new Exception($"Tweak Hook for named address not supported on {field.FieldType}");
+#else
+                    SimpleLog.Error($"Tweak Hook for named address not supported on {field.FieldType}");
+                    continue;
+#endif
+                }
+                
+                nint hookAddress = 0;
+                if (attribute.VirtualFunction) {
+#if TEST
+                    hookAddress = GetVirtualFunctionAddressFromAttribute(attribute);
+#else
+                    try {
+                        hookAddress = GetVirtualFunctionAddressFromAttribute(attribute);
+                        
+                        SimpleLog.Verbose($"    {attribute.AddressType.Name}.VirtualTable.{attribute.AddressName} = 0x{hookAddress:X}");
+                    } catch (Exception ex) {
+                        SimpleLog.Error(ex.Message);
+                    }
+#endif
+                } else {
+                    
+                    var addressesType = attribute.AddressType.GetNestedType("Addresses");
+                    if (addressesType == null) {
+#if TEST
+                    throw new Exception($"Failed to find {attribute.AddressType}.Addresses");
+#else
+                        SimpleLog.Error($"Failed to find {attribute.AddressType}.Addresses");
+                        continue;
+#endif
+                    }
+                    
+
+                    var addressField = addressesType.GetField(attribute.AddressName);
+
+                    if (addressField == null) {
+#if TEST
+                    throw new Exception($"Failed to find {attribute.AddressType.Name}.Addresses.{attribute.AddressName}");
+#else
+                        SimpleLog.Error($"Failed to find {attribute.AddressType.Name}.Addresses.{attribute.AddressName}");
+                        continue;
+#endif
+                    }
+
+                    var addressObj = addressField.GetValue(null);
+
+                    if (addressObj is not Address address) {
+#if TEST
+                    throw new Exception($"{attribute.AddressType.Name}.Addresses.{attribute.AddressName} is not an Address?");
+#else
+                        SimpleLog.Error($"{attribute.AddressType.Name}.Addresses.{attribute.AddressName} is not an Address?");
+                        continue;
+#endif
+                    }
+
+                    SimpleLog.Verbose($"    {attribute.AddressType.Name}.Addresses.{attribute.AddressName} = 0x{hookAddress:X}");
+                    hookAddress = address.Value;
+                }
+
+                if (hookAddress == 0) {
+                    continue;
+                }
+
+                var hookDelegateType = field.FieldType.GenericTypeArguments[0];
+                const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+
+                Delegate? detour;
+
+                if (attribute.DetourName == null) {
+                    var matches = GetType().GetMethods(Flags).Select(method => method.IsStatic ? Delegate.CreateDelegate(hookDelegateType, method, false) : Delegate.CreateDelegate(hookDelegateType, this, method, false)).Where(del => del != null).ToArray();
+                    if (matches.Length != 1) {
+                        continue;
+                    }
+
+                    detour = matches[0]!;
+                } else {
+                    var method = this.GetType().GetMethod(attribute.DetourName, Flags);
+                    if (method == null) {
+                        continue;
+                    }
+
+                    var del = method.IsStatic ? Delegate.CreateDelegate(hookDelegateType, method, false) : Delegate.CreateDelegate(hookDelegateType, this, method, false);
+                    if (del == null) {
+                        continue;
+                    }
+
+                    detour = del;
+                }
+
+                var hookType = field.FieldType.GetField("wrappedHook", BindingFlags.Instance | BindingFlags.NonPublic)!.FieldType;
+
+                var createMethod = hookType.GetMethod("FromAddress", BindingFlags.Static | BindingFlags.NonPublic);
+                if (createMethod == null) {
+                    
+#if TEST
+                    throw new Exception($"{GetType().Name}: could not find Hook<{hookDelegateType.Name}>.FromAddress");
+#else
+                    BryerTweaks.Plugin.Error(new Exception($"{GetType().Name}: could not find Hook<{hookDelegateType.Name}>.FromAddress"));
+                    continue;
+#endif
+                }
+
+                var hook = createMethod.Invoke(null, [hookAddress, detour, false, GetType().Assembly]);
+
+                var wrapperCtor = field.FieldType.GetConstructor([hookType]);
+                if (wrapperCtor == null) {
+                    
+#if TEST
+                    throw new Exception($"{GetType().Name}: could not find could not find HookWrapper<{hookDelegateType.Name}> constructor");
+#else
+                    BryerTweaks.Plugin.Error(new Exception($"{GetType().Name}: could not find could not find HookWrapper<{hookDelegateType.Name}> constructor"));
+                    continue;
+#endif
+                }
+
+                var wrapper = wrapperCtor.Invoke([hook]);
+                SimpleLog.Verbose($"Created Hook Wrapper");
+                field.SetValue(this, wrapper);
+            }
+
+            if (!attribute.AutoEnable) continue;
+            if (field.GetValue(this) is IHookWrapper h) {
+                SimpleLog.Verbose($"Enable Tweak Hook: [{Name}] {field.Name}");
+                h.Enable();
+            } else {
+                SimpleLog.Warning($"Skipped enabling Tweak Hook [{Name}] {field.Name} - Hook not created");
+            }
+        }
+
+
+        foreach (var (field, attr) in this.GetFieldsWithAttribute<LinkHandlerAttribute>()) {
+            if (attr == null) continue;
+            if (field.FieldType != typeof(DalamudLinkPayload)) {
+                Plugin.Error(this, new Exception($"Invalid LinkHandler '{field.Name}' must be DalamudLinkPayload."));
+                continue;
+            }
+            DalamudLinkPayload? handler = null;
+            if (string.IsNullOrEmpty(attr.MethodName)) {
+                handler = Service.Chat.AddChatLinkHandler((uint) attr.Id, (i, s) => { });
+            } else {
+                var method = this.GetType().GetMethod(attr.MethodName, BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                if (method == null) continue;
+                var methodParams = method.GetParameters();
+
+                handler = methodParams.Length switch {
+                    0 => Service.Chat.AddChatLinkHandler((uint)attr.Id, (i, s) => { method.Invoke(this, []); }),
+                    1 when methodParams[0].ParameterType == typeof(SeString) => Service.Chat.AddChatLinkHandler((uint)attr.Id, (i, s) => { method.Invoke(this, [s]); }),
+                    2 when methodParams[0].ParameterType == typeof(uint) && methodParams[1].ParameterType == typeof(SeString) => Service.Chat.AddChatLinkHandler((uint)attr.Id, (i, s) => { method.Invoke(this, [i, s]); }),
+                    _ => handler
+                };
+            }
+           
+            if (handler == null) {
+                Plugin.Error(this, new Exception($"Invalid LinkHandler '{field.Name}'."));
+            } else {
+                field.SetValue(this, handler);
+            }
+        }
+        
+        AfterEnable();
+
+        Enabled = true;
+    }
+
+    protected virtual void Enable() { }
+    protected virtual void AfterEnable() { }
+
+    internal void InternalDisable() {
+        Unloading = true;
+        Disable();
+        EventController.UnregisterEvents(this);
+
+        foreach (var (field, _) in this.GetFieldsWithAttribute<TweakHookAttribute>()) {
+            SimpleLog.Verbose($"Disable Tweak Hook: [{Name}] {field.Name}");
+            if (field.GetValue(this) is IHookWrapper h) {
+                h.Disable();
+            }
+        }
+
+        foreach (var (field, attr) in this.GetFieldsWithAttribute<LinkHandlerAttribute>()) {
+            if (field.FieldType != typeof(DalamudLinkPayload)) continue;
+            if (field.GetValue(this) is DalamudLinkPayload v) {
+                Service.Chat.RemoveChatLinkHandler(v.CommandId);
+            }
+        }
+
+        // Auto Save Config
+        if (UseAutoConfig && TweakAutoConfigAttribute is not NoAutoConfig && TweakAutoConfigAttribute.AutoSaveLoad) {
+            AutoSaveConfig();
+        }
+
+        Enabled = false;
+        AfterDisable();
+    }
+
+    protected virtual void Disable() { }
+    protected virtual void AfterDisable() { }
+
+    public virtual void Dispose() {
+        foreach (var (field, _) in this.GetFieldsWithAttribute<TweakHookAttribute>()) {
+            SimpleLog.Verbose($"Dispose Tweak Hook: [{Name}] {field.Name}");
+            if (field.GetValue(this) is IHookWrapper h) {
+                h.Dispose();
+            }
+        }
+
+        Ready = false;
+    }
+
+    internal void InternalDispose() {
+        Dispose();
+        IsDisposed = true;
+    }
+
+    [Obsolete("Use attributes")]
+    protected ChangelogEntry AddChangelog(string version, string log) => Changelog.Add(this, version, log);
+    
+    [Obsolete("Use attributes")]
+    protected ChangelogEntry AddChangelogNewTweak(string version) => Changelog.AddNewTweak(this, version).Author(Author);
+
+    #region Attribute Handles
+
+    private TweakNameAttribute tweakNameAttribute;
+
+    protected TweakNameAttribute TweakNameAttribute {
+        get {
+            if (tweakNameAttribute != null) return tweakNameAttribute;
+            tweakNameAttribute = GetType().GetCustomAttribute<TweakNameAttribute>() ?? new TweakNameAttribute($"{GetType().Name}");
+            return tweakNameAttribute;
+        }
+    }
+    
+    private TweakKeyAttribute tweakKeyAttribute;
+
+    protected TweakKeyAttribute TweakKeyAttribute {
+        get {
+            if (tweakKeyAttribute != null) return tweakKeyAttribute;
+            tweakKeyAttribute = GetType().GetCustomAttribute<TweakKeyAttribute>() ?? new TweakKeyAttribute($"{GetType().Name}");
+            return tweakKeyAttribute;
+        }
+    }
+
+    private TweakDescriptionAttribute tweakDescriptionAttribute;
+
+    protected TweakDescriptionAttribute TweakDescriptionAttribute {
+        get {
+            if (tweakDescriptionAttribute != null) return tweakDescriptionAttribute;
+            tweakDescriptionAttribute = GetType().GetCustomAttribute<TweakDescriptionAttribute>() ?? TweakDescriptionAttribute.Default;
+            return tweakDescriptionAttribute;
+        }
+    }
+
+    private TweakAuthorAttribute tweakAuthorAttribute;
+
+    protected TweakAuthorAttribute TweakAuthorAttribute {
+        get {
+            if (tweakAuthorAttribute != null) return tweakAuthorAttribute;
+            tweakAuthorAttribute = GetType().GetCustomAttribute<TweakAuthorAttribute>() ?? TweakAuthorAttribute.Default;
+            return tweakAuthorAttribute;
+        }
+    }
+
+    private TweakVersionAttribute tweakVersionAttribute;
+
+    protected TweakVersionAttribute TweakVersionAttribute {
+        get {
+            if (tweakVersionAttribute != null) return tweakVersionAttribute;
+            tweakVersionAttribute = GetType().GetCustomAttribute<TweakVersionAttribute>() ?? new TweakVersionAttribute(1);
+            return tweakVersionAttribute;
+        }
+    }
+
+    private TweakAutoConfigAttribute tweakAutoConfigAttribute;
+
+    protected TweakAutoConfigAttribute TweakAutoConfigAttribute {
+        get {
+            if (tweakAutoConfigAttribute != null) return tweakAutoConfigAttribute;
+            tweakAutoConfigAttribute = GetType().GetCustomAttribute<TweakAutoConfigAttribute>() ?? NoAutoConfig.Singleton;
+            return tweakAutoConfigAttribute;
+        }
+    }
+
+    private TweakTagsAttribute tweakTagsAttribute;
+
+    protected TweakTagsAttribute TweakTagsAttribute {
+        get {
+            if (tweakDescriptionAttribute != null) return tweakTagsAttribute;
+            tweakTagsAttribute = GetType().GetCustomAttribute<TweakTagsAttribute>() ?? new TweakTagsAttribute();
+            return tweakTagsAttribute;
+        }
+    }
+
+    public HashSet<string> Categories {
+        get {
+            if (field != null) return field;
+
+            void HandleAttributes(IEnumerable<TweakCategoryAttribute> attributes) {
+                field = new HashSet<string>();
+                foreach (var attr in attributes) {
+                    foreach (var v in attr.Categories) {
+                        field.Add(v);
+                    }
+                }
+            }
+
+            HandleAttributes(GetType().GetCustomAttributes<TweakCategoryAttribute>(true));
+            foreach (var i in GetType().GetInterfaces()) {
+                HandleAttributes(i.GetCustomAttributes<TweakCategoryAttribute>(true));
+            }
+
+            if (Experimental) field?.Add($"{TweakCategory.Experimental}");
+
+            return field ?? [];
+        }
+    }
+
+    #endregion
+
+    public virtual void Test() {
+        
+    }
+}

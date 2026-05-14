@@ -1,0 +1,244 @@
+﻿using System;
+using System.Diagnostics;
+using System.Numerics;
+using FFXIVClientStructs.FFXIV.Client.System.Memory;
+using FFXIVClientStructs.FFXIV.Component.GUI;
+using Dalamud.Bindings.ImGui;
+using BryerTweaks.TweakSystem;
+using BryerTweaks.Utility;
+
+namespace BryerTweaks.Tweaks.UiAdjustment;
+
+[TweakName("Time Until GP Max")]
+[TweakDescription("Shows a countdown when playing Gathering classes to estimate the time until their GP is capped.")]
+public unsafe class TimeUntilGpMax : UiAdjustments.SubTweak {
+    private readonly Stopwatch lastGpChangeStopwatch = new();
+    private readonly Stopwatch lastUpdate = new();
+    private uint lastGp = uint.MaxValue;
+    private int gpPerTick = 5;
+    private float timePerTick = 3f;
+    private int forceVisible;
+
+    public delegate void UpdateParamDelegate(uint a1, uint* a2, byte a3);
+
+    private HookWrapper<UpdateParamDelegate> updateParamHook;
+
+    public class Configs : TweakConfig {
+        public int GpGoal = -1;
+        public Vector2 PositionOffset = new(0);
+        public bool EorzeaTime;
+    }
+
+    protected void DrawConfig(ref bool hasChanged) {
+        ImGui.Checkbox(LocString("EorzeaTime", "Display Eorzea Time"), ref Config.EorzeaTime);
+        ImGui.SetNextItemWidth(200 * ImGui.GetIO().FontGlobalScale);
+        hasChanged |= ImGui.SliderInt("Target GP##timeUntilGpMax", ref Config.GpGoal, -1, 1000);
+        ImGui.SetNextItemWidth(200 * ImGui.GetIO().FontGlobalScale);
+        if (ImGui.DragFloat2("Position##timeUntilGpMax", ref Config.PositionOffset)) {
+            forceVisible = 5;
+            hasChanged = true;
+        }
+
+        if (hasChanged) Update();
+    }
+
+    public Configs Config { get; private set; }
+
+    protected override void Setup() {
+        AddChangelog("1.8.2.0", "Added an option to display time in Eorzean Hours").Author("peterberbec");
+    }
+
+    protected override void Enable() {
+        Config = LoadConfig<Configs>() ?? new Configs();
+        lastUpdate.Restart();
+        updateParamHook ??= Common.Hook<UpdateParamDelegate>("48 89 5C 24 ?? 48 89 6C 24 ?? 56 48 83 EC ?? 83 3D ?? ?? ?? ?? ?? 41 0F B6 E8 48 8B DA 8B F1 0F 84 ?? ?? ?? ?? 48 89 7C 24", UpdateParamDetour);
+        updateParamHook.Enable();
+        Common.FrameworkUpdate += FrameworkUpdate;
+        base.Enable();
+    }
+
+    private void UpdateParamDetour(uint a1, uint* a2, byte a3) {
+        updateParamHook.Original(a1, a2, a3);
+        try {
+            if (Service.Objects.LocalPlayer == null) return;
+            if (!lastGpChangeStopwatch.IsRunning) {
+                lastGpChangeStopwatch.Restart();
+            } else {
+                if (Service.Objects.LocalPlayer.CurrentGp > lastGp && lastGpChangeStopwatch.ElapsedMilliseconds is > 1000 and < 4000) {
+                    var diff = (int)Service.Objects.LocalPlayer.CurrentGp - (int)lastGp;
+                    if (diff < 20) {
+                        gpPerTick = diff;
+                        lastGp = Service.Objects.LocalPlayer.CurrentGp;
+                        lastGpChangeStopwatch.Restart();
+                    }
+                }
+
+                if (Service.Objects.LocalPlayer.CurrentGp != lastGp) {
+                    lastGp = Service.Objects.LocalPlayer.CurrentGp;
+                    lastGpChangeStopwatch.Restart();
+                }
+            }
+        } catch (Exception ex) {
+            Plugin.Error(this, ex, false, "Error in UpdateParamDetour");
+        }
+    }
+
+    protected override void Disable() {
+        SaveConfig(Config);
+        lastUpdate.Stop();
+        updateParamHook?.Disable();
+        Common.FrameworkUpdate -= FrameworkUpdate;
+        Update(true);
+        base.Disable();
+    }
+
+    public override void Dispose() {
+        updateParamHook?.Disable();
+        updateParamHook?.Dispose();
+        base.Dispose();
+    }
+
+    private void FrameworkUpdate() {
+        try {
+            if (Service.PlayerState.ContentId == 0) return;
+            if (!lastUpdate.IsRunning) lastUpdate.Restart();
+            if (lastUpdate.ElapsedMilliseconds < 1000) return;
+            lastUpdate.Restart();
+            Update();
+        } catch (Exception ex) {
+            SimpleLog.Error(ex);
+        }
+    }
+
+    private void Update(bool reset = false) {
+        var localPlayer = Service.Objects.LocalPlayer;
+        if (localPlayer == null) return;
+        
+        if (localPlayer.ClassJob.Value.ClassJobCategory.RowId != 32) reset = true;
+        var paramWidget = Common.GetUnitBase("_ParameterWidget");
+        if (paramWidget == null) return;
+
+        var gatheringWidget = Common.GetUnitBase("Gathering");
+        if (gatheringWidget == null) gatheringWidget = Common.GetUnitBase("GatheringMasterpiece");
+
+        AtkTextNode* textNode = null;
+        for (var i = 0; i < paramWidget->UldManager.NodeListCount; i++) {
+            if (paramWidget->UldManager.NodeList[i] == null) continue;
+            if (paramWidget->UldManager.NodeList[i]->NodeId == CustomNodes.TimeUntilGpMax) {
+                textNode = (AtkTextNode*)paramWidget->UldManager.NodeList[i];
+                if (reset) {
+                    paramWidget->UldManager.NodeList[i]->ToggleVisibility(false);
+                    continue;
+                }
+
+                break;
+            }
+        }
+
+        if (textNode == null && reset) return;
+
+        if (textNode == null) {
+            var newTextNode = IMemorySpace.GetUISpace()->Create<AtkTextNode>();
+            if (newTextNode != null) {
+                var lastNode = paramWidget->RootNode;
+                if (lastNode == null) return;
+
+                textNode = newTextNode;
+
+                newTextNode->AtkResNode.Type = NodeType.Text;
+                newTextNode->AtkResNode.NodeFlags = NodeFlags.AnchorLeft | NodeFlags.AnchorTop;
+                newTextNode->AtkResNode.DrawFlags = 0;
+                textNode->AtkResNode.SetPositionFloat(210 + Config.PositionOffset.X, 1 + Config.PositionOffset.Y);
+                newTextNode->AtkResNode.SetWidth(200);
+                newTextNode->AtkResNode.SetHeight(14);
+
+                newTextNode->LineSpacing = 24;
+                newTextNode->AlignmentFontType = 0x15;
+                newTextNode->FontSize = 12;
+                newTextNode->TextFlags = TextFlags.Edge;
+
+                newTextNode->AtkResNode.NodeId = CustomNodes.TimeUntilGpMax;
+
+                newTextNode->AtkResNode.Color.A = 0xFF;
+                newTextNode->AtkResNode.Color.R = 0xFF;
+                newTextNode->AtkResNode.Color.G = 0xFF;
+                newTextNode->AtkResNode.Color.B = 0xFF;
+
+                if (lastNode->ChildNode != null) {
+                    lastNode = lastNode->ChildNode;
+                    while (lastNode->PrevSiblingNode != null) {
+                        lastNode = lastNode->PrevSiblingNode;
+                    }
+
+                    newTextNode->AtkResNode.NextSiblingNode = lastNode;
+                    newTextNode->AtkResNode.ParentNode = paramWidget->RootNode;
+                    lastNode->PrevSiblingNode = (AtkResNode*)newTextNode;
+                } else {
+                    lastNode->ChildNode = (AtkResNode*)newTextNode;
+                    newTextNode->AtkResNode.ParentNode = lastNode;
+                }
+
+                textNode->TextColor.A = 0xFF;
+                textNode->TextColor.R = 0xFF;
+                textNode->TextColor.G = 0xFF;
+                textNode->TextColor.B = 0xFF;
+
+                textNode->EdgeColor.A = 0xFF;
+                textNode->EdgeColor.R = 0xF0;
+                textNode->EdgeColor.G = 0x8E;
+                textNode->EdgeColor.B = 0x37;
+
+                paramWidget->UldManager.UpdateDrawNodeList();
+            }
+        }
+
+        if (reset) {
+            textNode->AtkResNode.ToggleVisibility(false);
+            return;
+        }
+
+
+        var targetGp = Config.GpGoal > 0 ? Math.Min(Config.GpGoal, localPlayer.MaxGp) : localPlayer.MaxGp;
+        if (targetGp - localPlayer.CurrentGp > 0 || forceVisible > 0) {
+            if (forceVisible > 0) forceVisible--;
+            textNode->AtkResNode.ToggleVisibility(true);
+            textNode->AtkResNode.SetPositionFloat(210 + Config.PositionOffset.X, 1 + Config.PositionOffset.Y);
+
+            var gpPerSecond = gpPerTick / timePerTick;
+            var secondsUntilFull = (targetGp - localPlayer.CurrentGp) / gpPerSecond;
+
+            if (gatheringWidget == null) {
+                secondsUntilFull += timePerTick - (float)lastGpChangeStopwatch.Elapsed.TotalSeconds;
+            } else {
+                lastGpChangeStopwatch.Restart();
+            }
+
+            if (secondsUntilFull < 0) secondsUntilFull = 0;
+            var minutesUntilFull = 0;
+            if (Config.EorzeaTime) {
+                var hoursUntilFull = 0;
+                secondsUntilFull = (secondsUntilFull * 3600) / 175; /* convert Earth seconds into Eorzea seconds */
+                while (secondsUntilFull >= 60) {
+                    minutesUntilFull += 1;
+                    secondsUntilFull -= 60;
+                }
+
+                while (minutesUntilFull >= 60) {
+                    minutesUntilFull -= 60;
+                    hoursUntilFull += 1;
+                }
+
+                textNode->SetText($"{hoursUntilFull:00}:{minutesUntilFull:00}");
+            } else {
+                while (secondsUntilFull >= 60) {
+                    minutesUntilFull += 1;
+                    secondsUntilFull -= 60;
+                }
+
+                textNode->SetText($"{minutesUntilFull:00}:{(int)secondsUntilFull:00}");
+            }
+        } else {
+            textNode->AtkResNode.ToggleVisibility(false);
+        }
+    }
+}

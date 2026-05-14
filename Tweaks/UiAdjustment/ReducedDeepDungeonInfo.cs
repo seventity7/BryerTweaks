@@ -1,0 +1,187 @@
+using Dalamud.Utility;
+using FFXIVClientStructs.FFXIV.Component.GUI;
+using Lumina.Excel.Sheets;
+using Lumina.Text;
+using Lumina.Text.Payloads;
+using Lumina.Text.ReadOnly;
+using BryerTweaks.Events;
+using BryerTweaks.TweakSystem;
+using BryerTweaks.Utility;
+
+namespace BryerTweaks.Tweaks.UiAdjustment; 
+
+[TweakName("Reduced Deep Dungeon Info")]
+[TweakDescription("Removes redundant information from the deep dungeon character info.")]
+[TweakAuthor("Aireil")]
+[Changelog("1.10.11.1", "Fixed crash.")]
+public unsafe class ReducedDeepDungeonInfo : UiAdjustments.SubTweak {
+    protected override void Enable() {
+        limiter = -10;
+        UpdateDeepDungeonStatus(Common.GetUnitBase("DeepDungeonStatus"), false);
+    }
+
+    protected override void Disable() {
+        UpdateDeepDungeonStatus(Common.GetUnitBase("DeepDungeonStatus"), true);
+    }
+    
+    [AddonPreDraw("DeepDungeonStatus")]
+    private void UpdateDeepDungeonStatus(AtkUnitBase* unitBase) {
+        UpdateDeepDungeonStatus(unitBase, false);
+    }
+
+    [AddonPostSetup("DeepDungeonStatus")]
+    private void SetupDeepDungeonStatus() {
+        limiter = -10;
+    }
+    
+    private int limiter;
+
+    private void UpdateDeepDungeonStatus(AtkUnitBase* deepDungeonUnitBase, bool reset) {
+        if (deepDungeonUnitBase == null) return;
+        
+        var resNode = deepDungeonUnitBase->RootNode;
+        var guideNode = deepDungeonUnitBase->GetNodeById(3);
+        var windowCollisionNode = deepDungeonUnitBase->WindowCollisionNode;
+        var windowNode = deepDungeonUnitBase->WindowNode;
+        var itemsEffectsInfoNode = deepDungeonUnitBase->GetNodeById(64);
+        var magiciteInfoNode = deepDungeonUnitBase->GetNodeById(54);
+        var itemsInfoNode = deepDungeonUnitBase->GetNodeById(16);
+        var gearInfoNode = deepDungeonUnitBase->GetNodeById(12);
+
+        var armAetherpoolNode = deepDungeonUnitBase->GetComponentNodeById(14);
+        var armAetherpoolTextNode = armAetherpoolNode->Component->GetTextNodeById(3);
+        var armorAetherpoolNode = deepDungeonUnitBase->GetComponentNodeById(15);
+        var armorAetherpoolTextNode = armorAetherpoolNode->Component->GetTextNodeById(3);
+        
+        var textNode = deepDungeonUnitBase->GetTextNodeById(10);
+
+        var isHoh = magiciteInfoNode->IsVisible();
+
+        if (reset) {
+            gearInfoNode->ToggleVisibility(true);
+            guideNode->ToggleVisibility(true);
+            deepDungeonUnitBase->GetNodeById(5)->ToggleVisibility(true); // Job infos
+            deepDungeonUnitBase->GetNodeById(6)->ToggleVisibility(true);
+            deepDungeonUnitBase->GetNodeById(7)->ToggleVisibility(true);
+            deepDungeonUnitBase->GetNodeById(8)->ToggleVisibility(true);
+            deepDungeonUnitBase->GetNodeById(9)->ToggleVisibility(true);
+            deepDungeonUnitBase->GetNodeById(11)->ToggleVisibility(true);
+
+            UiHelper.SetPosition(itemsEffectsInfoNode, null, isHoh ? 486 : 410);
+            if (isHoh)
+                UiHelper.SetPosition(magiciteInfoNode, null, 412);
+            UiHelper.SetPosition(itemsInfoNode, null, 246);
+            UiHelper.SetSize(resNode, null, isHoh ? 616 : 540);
+            UiHelper.SetSize(windowCollisionNode, null, isHoh ? 616 : 540);
+            SetDeepdungeonWindow(windowNode, null, (ushort) (isHoh ? 616 : 540));
+
+            UiHelper.SetPosition(textNode, 78, 65);
+            textNode->FontSize = 12;
+            textNode->AlignmentFontType = 3;
+            textNode->SetText(Service.Data.Excel.GetSheet<Addon>().GetRow(10430).Text);
+
+            return;
+        }
+
+        gearInfoNode->ToggleVisibility(false);
+        guideNode->ToggleVisibility(false);
+        deepDungeonUnitBase->GetNodeById(5)->ToggleVisibility(false); // Job infos
+        deepDungeonUnitBase->GetNodeById(6)->ToggleVisibility(false);
+        deepDungeonUnitBase->GetNodeById(7)->ToggleVisibility(false);
+        deepDungeonUnitBase->GetNodeById(8)->ToggleVisibility(false);
+        deepDungeonUnitBase->GetNodeById(9)->ToggleVisibility(false);
+        deepDungeonUnitBase->GetNodeById(11)->ToggleVisibility(false);
+
+        UiHelper.SetPosition(itemsEffectsInfoNode, null, isHoh ? 270 : 194);
+        if (isHoh)
+            UiHelper.SetPosition(magiciteInfoNode, null, 196);
+        UiHelper.SetPosition(itemsInfoNode, null, 30);
+        UiHelper.SetSize(resNode, null, isHoh ? 398 : 322);
+        UiHelper.SetSize(windowCollisionNode, null, isHoh ? 398 : 322);
+        SetDeepdungeonWindow(windowNode, null, (ushort) (isHoh ? 398 : 322));
+
+        // Limit expensive SeString manipulations
+        switch (limiter)
+        {
+            case > 0:
+                limiter--;
+                return;
+            // Burst when the window is created
+            case < 0:
+                limiter++;
+                break;
+            case 0:
+                limiter = 50;
+                break;
+        }
+
+        UiHelper.SetPosition(textNode, 148, 0);
+        textNode->FontSize = 14;
+        textNode->AlignmentFontType = 5;
+        var armAetherpoolSeStr = armAetherpoolTextNode->NodeText.AsReadOnlySeStringSpan();
+        var armorAetherpoolSeStr = armorAetherpoolTextNode->NodeText.AsReadOnlySeStringSpan();
+
+        var builder = new SeStringBuilder();
+        AppendAetherpoolToBuilder(builder, armAetherpoolSeStr);
+        builder.Append("/");
+        AppendAetherpoolToBuilder(builder, armorAetherpoolSeStr);
+        textNode->SetText(builder.GetViewAsSpan());
+    }
+
+    private static void SetDeepdungeonWindow(AtkComponentNode* windowNode, ushort? width, ushort? height)
+    {
+        width ??= windowNode->AtkResNode.Width;
+        height ??= windowNode->AtkResNode.Height;
+
+        var n = windowNode->Component->UldManager.RootNode;
+        UiHelper.SetSize(windowNode, width, height);  // Window
+        UiHelper.SetSize(n, width, height);  // Collision
+        n = n->PrevSiblingNode->PrevSiblingNode;
+        UiHelper.SetSize(n, width - 2, height - 2); // Background
+        n = n->PrevSiblingNode;
+        UiHelper.SetSize(n, width - 2, height - 2); // Focused Border
+
+        windowNode->AtkResNode.DrawFlags |= 0x1;
+    }
+
+    private void AppendAetherpoolToBuilder(SeStringBuilder builder, ReadOnlySeStringSpan aetherpoolSeStr) {
+        var aetherpool = string.Empty;
+        var isSynced = false;
+        
+        foreach (var payload in aetherpoolSeStr) {
+            if (payload.Type == ReadOnlySePayloadType.Macro && payload.MacroCode == MacroCode.Italic && payload.TryGetExpression(out var expression) && expression.TryGetUInt(out var expressionValue) && expressionValue == 1) {
+                // There has to be a better way to do this, right?
+                isSynced = true;
+            }
+            
+            if (payload.Type != ReadOnlySePayloadType.Text) continue;
+            var text = payload.ToString();
+            if (text.Contains('+')) {
+                aetherpool = text[text.IndexOf('+')..];
+                break;
+            }
+        }
+
+        if (string.IsNullOrEmpty(aetherpool)) aetherpool = "+0";
+        var isMax = aetherpool == "+99";
+        
+        if (isMax) {
+            builder.PushColorType(500);
+            builder.PushEdgeColorType(501);
+        } else if (isSynced) {
+            builder.PushColorType(573);
+            builder.PushEdgeColorType(574);
+        }
+        
+        if (isSynced) builder.AppendSetItalic(true);
+        
+        builder.Append(aetherpool);
+
+        if (isMax || isSynced) {
+            builder.PopColorType();
+            builder.PopEdgeColorType();
+        }
+
+        if (isSynced) builder.AppendSetItalic(false);
+    }
+}
