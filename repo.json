@@ -5,7 +5,7 @@
     "Punchline": "A personal collection of tweaks and UI adjustments for FFXIV.",
     "Description": "BryerTweaks is a custom Dalamud plugin containing various quality-of-life tweaks, UI adjustments, chat tweaks, overlays, popups, and visual customization options.",
     "InternalName": "BryerTweaks",
-    "AssemblyVersion": "1.0.0.7",
+    "AssemblyVersion": "1.0.0.8",
     "TestingAssemblyVersion": null,
     "RepoUrl": "https://github.com/seventity7/BryerTweaks",
     "ApplicableVersion": "any",

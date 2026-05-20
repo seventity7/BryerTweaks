@@ -1239,6 +1239,8 @@ ImGui.Unindent();
         var configDirectory = Service.PluginInterface.GetPluginConfigDirectory();
         Directory.CreateDirectory(configDirectory);
 
+        UnloadTweaksBeforeConfigImport();
+
         foreach (var pair in bundle.ConfigFiles) {
             var fileName = Path.GetFileName(pair.Key);
             if (string.IsNullOrWhiteSpace(fileName) || !fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) continue;
@@ -1270,9 +1272,14 @@ ImGui.Unindent();
         ShowConfigTransferPopup("Plugin configuration loaded with success!");
     }
 
-    private void ReloadTweaksAfterConfigImport(Dictionary<string, string>? liveTweakConfigs = null) {
+    private void UnloadTweaksBeforeConfigImport() {
         foreach (var provider in plugin.TweakProviders.Where(provider => !provider.IsDisposed).ToList()) {
             provider.UnloadTweaks();
+        }
+    }
+
+    private void ReloadTweaksAfterConfigImport(Dictionary<string, string>? liveTweakConfigs = null) {
+        foreach (var provider in plugin.TweakProviders.Where(provider => !provider.IsDisposed).ToList()) {
             provider.LoadTweaks();
         }
 
